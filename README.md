@@ -10,6 +10,7 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey.svg)]()
 [![WeChat](https://img.shields.io/badge/WeChat-iLink-brightgreen.svg)]()
 [![QQ](https://img.shields.io/badge/QQ-Open%20API-blue.svg)]()
+[![LINUX DO](https://img.shields.io/badge/LINUX_DO-Where_Possible_Begins-black.svg)](https://linux.do/)
 
 </div>
 
