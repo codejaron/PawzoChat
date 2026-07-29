@@ -1,0 +1,144 @@
+<!--
+  PawzoChat - Multi-platform LLM-powered chatbot
+  Copyright (C) 2026  iwyxdxl
+
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU Affero General Public License as published
+  by the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU Affero General Public License for more details.
+
+  You should have received a copy of the GNU Affero General Public License
+  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="author" content="iwyxdxl">
+<meta name="pawzo-source" content="https://github.com/iwyxdxl/PawzoChat">
+<title>PawzoChat</title>
+<link rel="icon" type="image/png" href="{{ request.script_root }}/static/logo.png">
+<link rel="stylesheet" href="{{ request.script_root }}/static/style.css">
+<link rel="stylesheet" href="{{ request.script_root }}/static/desktop.css">
+<script data-base="{{ request.script_root }}">window.PAWZOCHAT_BASE = document.currentScript.dataset.base;</script>
+<script>
+(function(){
+  try {
+    var raw = localStorage.getItem("pawzo_theme_cache");
+    var mode;
+    if (raw) {
+      var t = JSON.parse(raw);
+      mode = t && t.mode;
+    }
+    if (!mode) mode = "{{ theme_mode }}";
+    var resolved = mode === "auto"
+      ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+      : (mode === "dark" ? "dark" : "light");
+    document.documentElement.dataset.theme = resolved;
+    if (raw) {
+      var t2 = JSON.parse(raw);
+      if (t2 && typeof t2.css === "string" && t2.css) {
+        var el = document.createElement("style");
+        el.id = "pawzo-theme-early";
+        el.textContent = t2.css;
+        document.head.appendChild(el);
+      }
+    }
+  } catch (e) {}
+})();
+</script>
+</head>
+<body>
+<div id="phone-shell">
+
+  <div id="sidebar">
+    <div id="sidebar-tabs">
+      <div class="tab active" data-tab="chat" onclick="PawzoChat.switchTab('chat')">
+        <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="{{ request.script_root }}/static/assets/vendor/remixicon/remixicon.symbol.svg#ri-chat-3-line"></use></svg>
+        <span>聊天</span>
+      </div>
+      <div class="tab" data-tab="contacts" onclick="PawzoChat.switchTab('contacts')">
+        <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="{{ request.script_root }}/static/assets/vendor/remixicon/remixicon.symbol.svg#ri-contacts-book-2-line"></use></svg>
+        <span>通讯录</span>
+      </div>
+      <div class="tab" data-tab="discover" onclick="PawzoChat.switchTab('discover')">
+        <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="{{ request.script_root }}/static/assets/vendor/remixicon/remixicon.symbol.svg#ri-star-smile-line"></use></svg>
+        <span>发现</span>
+      </div>
+      <div class="tab" data-tab="settings" onclick="PawzoChat.switchTab('settings')">
+        <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="{{ request.script_root }}/static/assets/vendor/remixicon/remixicon.symbol.svg#ri-settings-line"></use></svg>
+        <span>设置</span>
+      </div>
+    </div>
+    <div id="sidebar-header">
+      <span id="sidebar-title">聊天</span>
+      <div id="sidebar-actions"></div>
+    </div>
+    <div id="sidebar-body"></div>
+  </div>
+
+  <div id="main-panel">
+    <div id="top-bar">
+      <button id="top-bar-back" class="top-btn hide" onclick="PawzoChat.goBack()">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <span id="top-bar-title">聊天</span>
+      <div id="top-bar-actions"></div>
+    </div>
+    <div id="content-area"></div>
+  </div>
+
+  <div id="tab-bar">
+    <div class="tab active" data-tab="chat" onclick="PawzoChat.switchTab('chat')">
+      <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="{{ request.script_root }}/static/assets/vendor/remixicon/remixicon.symbol.svg#ri-chat-3-line"></use></svg>
+      <span>聊天</span>
+    </div>
+    <div class="tab" data-tab="contacts" onclick="PawzoChat.switchTab('contacts')">
+      <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="{{ request.script_root }}/static/assets/vendor/remixicon/remixicon.symbol.svg#ri-contacts-book-2-line"></use></svg>
+      <span>通讯录</span>
+    </div>
+    <div class="tab" data-tab="discover" onclick="PawzoChat.switchTab('discover')">
+      <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="{{ request.script_root }}/static/assets/vendor/remixicon/remixicon.symbol.svg#ri-star-smile-line"></use></svg>
+      <span>发现</span>
+    </div>
+    <div class="tab" data-tab="settings" onclick="PawzoChat.switchTab('settings')">
+      <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="{{ request.script_root }}/static/assets/vendor/remixicon/remixicon.symbol.svg#ri-settings-line"></use></svg>
+      <span>设置</span>
+    </div>
+  </div>
+</div>
+
+<div id="overlay" class="hide" onclick="PawzoChat.closeOverlay()"></div>
+<div id="action-sheet" class="hide">
+  <div class="sheet-handle"></div>
+  <div id="sheet-content"></div>
+</div>
+<div id="confirm-dialog" class="hide">
+  <div class="dialog-box">
+    <div class="dialog-title"></div>
+    <div class="dialog-desc"></div>
+    <div class="dialog-btns">
+      <button class="dialog-cancel" onclick="PawzoChat.closeConfirm(false)">取消</button>
+      <button class="dialog-ok" onclick="PawzoChat.closeConfirm(true)">确认</button>
+    </div>
+  </div>
+</div>
+<div id="loading-hud" class="hide" data-build-id="84aw4m7c964">
+  <div class="loading-hud-box">
+    <div class="loading-hud-spinner"></div>
+    <div class="loading-hud-text">处理中…</div>
+  </div>
+</div>
+<div id="toast" class="hide"></div>
+
+<!-- build: 84aw4m7c964 -->
+
+<script type="module" src="{{ request.script_root }}/static/app.js"></script>
+</body>
+</html>

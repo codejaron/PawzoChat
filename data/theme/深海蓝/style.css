@@ -1,0 +1,63 @@
+/*!
+ * PawzoChat - Multi-platform LLM-powered chatbot
+ * Copyright (C) 2026  iwyxdxl
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published
+ * by the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+/* 深海蓝主题 */
+:root {
+  --primary: #1E88E5;
+  --primary-light: #E3F2FD;
+  --primary-dark: #0D47A1;
+  --success: #26A69A;
+  --danger: #EF5350;
+  --bg: #F4F9FD;
+  --bg-outer: #E1EEF9;
+  --card: #FFFFFF;
+  --bubble-user: #42A5F5;
+  --bubble-ai: #FFFFFF;
+  --bubble-ai-border: #E1EEF9;
+  --text-1: #1A3048;
+  --text-2: #4A627A;
+  --text-3: #8AA0B5;
+  --divider: #DCE8F2;
+  --bg-hover: #EAF4FC;
+  --search-bg: #E3F2FD;
+  --tab-bar-bg: rgba(244, 249, 253, 0.92);
+  --icon-bg-primary: #E3F2FD;
+  --icon-fg-primary: #1E88E5;
+}
+
+:root[data-theme='dark'] {
+  --primary: #64B5F6;
+  --primary-light: #1A2A3A;
+  --primary-dark: #BBDEFB;
+  --success: #4DB6AC;
+  --danger: #E57373;
+  --bg: #0F1A24;
+  --bg-outer: #070E16;
+  --card: #17212E;
+  --bubble-user: #1565C0;
+  --bubble-ai: #17212E;
+  --bubble-ai-border: #1F2E3E;
+  --text-1: #E1EEF9;
+  --text-2: #A8BCCF;
+  --text-3: #6A7E92;
+  --divider: #1F2E3E;
+  --bg-hover: #192838;
+  --search-bg: #192838;
+  --tab-bar-bg: rgba(15, 26, 36, 0.92);
+  --icon-bg-primary: #1A2A3A;
+  --icon-fg-primary: #64B5F6;
+}

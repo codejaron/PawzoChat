@@ -1,0 +1,9 @@
+Remix Icon local sprite
+Source:
+- https://cdn.jsdelivr.net/npm/remixicon@4.8.0/fonts/remixicon.symbol.svg
+
+Official project and license:
+- https://github.com/Remix-Design/RemixIcon
+- https://github.com/Remix-Design/RemixIcon/blob/master/License
+
+This file is vendored locally so PawzoChat can render icons without runtime CDN access.
