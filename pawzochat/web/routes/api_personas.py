@@ -311,14 +311,21 @@ def create_persona():
         )
 
         mem_input = data.get("memory", {})
+        trigger_mode = mem_input.get("trigger_mode", "remind")
+        if trigger_mode not in ("remind", "summarize"):
+            return jsonify({"error": "trigger_mode 必须是 remind 或 summarize"}), 400
         try:
+            trigger_rounds = int(mem_input.get("trigger_rounds", 10))
+            if trigger_rounds < 0:
+                return jsonify({"error": "trigger_rounds 不能为负数"}), 400
             memory_cfg = {
                 "enabled": bool(mem_input.get("enabled", True)),
                 # Floor of 1: max_memories <= 0 makes the round-end
                 # consolidation always fire, wasting an LLM call every round.
                 "max_memories": max(1, int(mem_input.get("max_memories", 50))),
                 "include_in_prompt": bool(mem_input.get("include_in_prompt", True)),
-                "trigger_rounds": int(mem_input.get("trigger_rounds", 10)),
+                "trigger_rounds": trigger_rounds,
+                "trigger_mode": trigger_mode,
             }
         except (TypeError, ValueError):
             return jsonify({"error": "memory 配置字段类型无效"}), 400
@@ -369,6 +376,24 @@ def create_persona():
     return jsonify({"ok": True, "id": persona_id}), 201
 
 
+def _summarize_effective(mem: dict) -> bool:
+    """Whether the persona's memory auto-summarization is currently active.
+
+    Used to detect the enabled/trigger_rounds/trigger_mode transition in
+    ``update_persona`` so the summary cursor is reset only when the feature
+    newly turns on (never on a plain summarize→summarize save).
+    """
+    try:
+        rounds = int(mem.get("trigger_rounds", 10))
+    except (TypeError, ValueError):
+        rounds = 10
+    return (
+        bool(mem.get("enabled", True))
+        and mem.get("trigger_mode", "remind") == "summarize"
+        and rounds > 0
+    )
+
+
 @api_personas_bp.route("/<persona_id>", methods=["PUT"])
 def update_persona(persona_id: str):
     app = get_app()
@@ -408,9 +433,11 @@ def update_persona(persona_id: str):
         if "emoji_group" in data:
             cfg["emoji_group"] = data["emoji_group"]
 
+        summarize_activated = False
         if "memory" in data:
             mem_patch = data["memory"]
             existing_mem = cfg.get("memory", {})
+            old_summarize = _summarize_effective(existing_mem)
             if "enabled" in mem_patch:
                 existing_mem["enabled"] = bool(mem_patch["enabled"])
             if "max_memories" in mem_patch:
@@ -422,10 +449,25 @@ def update_persona(persona_id: str):
                 existing_mem["include_in_prompt"] = bool(mem_patch["include_in_prompt"])
             if "trigger_rounds" in mem_patch:
                 try:
-                    existing_mem["trigger_rounds"] = int(mem_patch["trigger_rounds"])
+                    trigger_rounds = int(mem_patch["trigger_rounds"])
                 except (TypeError, ValueError):
                     return jsonify({"error": "trigger_rounds 必须是整数"}), 400
+                if trigger_rounds < 0:
+                    return jsonify({"error": "trigger_rounds 不能为负数"}), 400
+                existing_mem["trigger_rounds"] = trigger_rounds
+            if "trigger_mode" in mem_patch:
+                if mem_patch["trigger_mode"] not in ("remind", "summarize"):
+                    return jsonify({"error": "trigger_mode 必须是 remind 或 summarize"}), 400
+                existing_mem["trigger_mode"] = mem_patch["trigger_mode"]
             cfg["memory"] = existing_mem
+            # Auto-summarization newly became effective (enabled/trigger_rounds/
+            # trigger_mode turned it on). Reset the summary cursor to the
+            # conversation's newest message so the very first summary does not
+            # swallow the whole pre-existing history at once. Done after the
+            # config is saved, best-effort: a failure must not fail the request.
+            summarize_activated = (
+                not old_summarize and _summarize_effective(existing_mem)
+            )
 
         if "proactive" in data:
             pro_patch = data["proactive"]
@@ -511,6 +553,15 @@ def update_persona(persona_id: str):
 
         app.config._data["personas"] = personas_cfg
         app.config.save()
+
+    # Reset the auto-summary cursor after the config is safely persisted.
+    # The reset only reads/writes memory.json and the conversation store, which
+    # are unrelated to the config lock, so it must not run inside it.
+    if summarize_activated and app.memory_service:
+        try:
+            app.memory_service.reset_summary_cursor(persona_id)
+        except Exception:
+            logger.warning("重置总结游标失败 persona=%s", persona_id, exc_info=True)
     return jsonify({"ok": True})
 
 
@@ -697,6 +748,7 @@ def _persona_config_from_card_result(
     """Assemble the config.yaml persona dict from a card-import result."""
     memory = result.memory or {
         "enabled": True, "max_memories": 50, "include_in_prompt": True,
+        "trigger_rounds": 10, "trigger_mode": "remind",
     }
     d = PROACTIVE_DEFAULTS
     qd = d["quiet_hours"]

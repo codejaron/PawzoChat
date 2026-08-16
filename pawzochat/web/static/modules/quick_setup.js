@@ -1072,7 +1072,7 @@ export async function submitQuickSetup() {
       emoji_enabled: hasDefaultGroup,
       emoji_send_probability: 25,
       emoji_group: hasDefaultGroup ? "default" : "",
-      memory: { enabled: true, max_memories: 50, include_in_prompt: true, trigger_rounds: 10 },
+      memory: { enabled: true, max_memories: 50, include_in_prompt: true, trigger_rounds: 10, trigger_mode: "remind" },
     };
     const igPatch = _buildImageGenerationPatch("qs-img-en");
     if (igPatch) body.image_generation = igPatch;

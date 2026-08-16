@@ -50,9 +50,11 @@ export function closeConfirm(result) {
 }
 
 let _onOverlayClose = null;
+let _overlayDismiss = true;
 
-export function showSheet(html, onClose) {
+export function showSheet(html, onClose, { dismissOverlay = true } = {}) {
   _onOverlayClose = onClose || null;
+  _overlayDismiss = dismissOverlay;
   clearTimeout(overlayCloseTimer);
   $("sheet-content").innerHTML = html;
   $("overlay").classList.remove("hide");
@@ -61,6 +63,16 @@ export function showSheet(html, onClose) {
     $("overlay").classList.add("show");
     $("action-sheet").classList.add("show");
   });
+}
+
+export function setOverlayDismissible(dismissible) {
+  _overlayDismiss = !!dismissible;
+}
+
+// Backdrop click handler — ignored while the current sheet is marked
+// non-dismissible (e.g. the update-download progress sheet).
+export function overlayClick() {
+  if (_overlayDismiss) closeOverlay();
 }
 
 export function closeOverlay() {

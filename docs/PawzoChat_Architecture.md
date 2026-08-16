@@ -53,7 +53,7 @@ PawzoChat 是一个多通道、多人设的 LLM 对话系统。当前内建微�
 6. 解析文本与 `[语音]`/`[voice]` 段；可用时合成 TTS，否则降级为文本；同时收集工具生成的图片。
 7. 可选由 `EmojiService` 追加表情，再触发 `reply.compose`。
 
-记忆记录和更新由 `record_memory` / `update_memory` 内置工具驱动；每轮结束后检查是否需要后台合并超限记忆。
+记忆记录和更新由 `record_memory` / `update_memory` 内置工具驱动；每轮结束后检查是否需要后台合并超限记忆。可选按角色配置的固定轮数自动总结（`memory.trigger_mode` 设为 `summarize` 时生效）：达到触发轮数后后台线程直接把本轮以来未总结的对话调用 LLM 总结为一条记忆并推进 `last_summarized_timestamp` 游标；`remind`（默认）模式仅注入提醒、由 AI 自行决定记录时机。
 
 ### 3.3 出站
 
@@ -72,7 +72,7 @@ PawzoChat 是一个多通道、多人设的 LLM 对话系统。当前内建微�
 - `qq`：被动回复文本/富媒体，TTS 优先转为 SILK 语音气泡。
 - `plugin:<id>`：调用插件注册的 `on_outbound`。
 
-主动消息和插件主动发送复用同一 Persona 互斥锁，并由 `Channel.can_push_now(...)` 判断通道是否允许推送。微信使用 23 小时安全窗口，QQ 禁止主动推送，Web 和插件通道默认允许。
+主动消息和插件主动发送复用同一 Persona 互斥锁，并由 `Channel.can_push_now(...)` 判断通道是否允许推送。微信使用 23 小时安全窗口和每条用户消息 10 条回复的配额（发送前本地预判，配额用尽则跳过），QQ 禁止主动推送，Web 和插件通道默认允许。主动消息连续失败 3 次会挂起该 Persona 的主动周期（仅内存状态，不落盘、不改写配置），用户下次回复或重启程序后自动恢复。
 
 ## 4. 关键模块
 
@@ -91,7 +91,7 @@ PawzoChat 是一个多通道、多人设的 LLM 对话系统。当前内建微�
 | 存储 | `store/conversation.py`、`store/moments.py` | 会话与朋友圈 JSON 持久化 |
 | LLM | `llm/manager.py`、`llm/providers/` | OpenAI 兼容、Anthropic、Gemini |
 | 生图 | `image/manager.py`、`image/providers/` | OpenAI、Gemini、NovelAI 等生图后端 |
-| 语音 | `voice/manager.py`、`voice/providers/` | MiniMax/OpenAI 兼容 TTS 与音频转码 |
+| 语音 | `voice/manager.py`、`voice/providers/` | MiniMax/MiMo/OpenAI 兼容 TTS 与音频转码 |
 | MCP | `mcp/manager.py`、`mcp/adapters.py` | Server 生命周期、工具聚合、能力适配 |
 | 内置工具 | `mcp/builtin/` | 生图、查看参考图、记录/更新记忆 |
 | 插件 | `core/extensions/` | 发现、依赖排序、权限 facade、hook 和卸载 |

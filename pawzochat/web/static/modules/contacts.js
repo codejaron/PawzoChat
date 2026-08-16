@@ -468,7 +468,7 @@ async function renderPersonaEdit(data) {
   let p = { id: "", name: "", llm_provider: "", llm_model: "", temperature: 1.0, max_tokens: 2000,
             character_prompt: "", output_examples: "", system_instructions: "",
             emoji_enabled: false, emoji_send_probability: 25, emoji_group: "", has_avatar: false,
-            memory: { enabled: true, max_memories: 50, include_in_prompt: true, trigger_rounds: 10 }, memory_count: 0,
+            memory: { enabled: true, max_memories: 50, include_in_prompt: true, trigger_rounds: 10, trigger_mode: "remind" }, memory_count: 0,
             proactive: {
               enabled: false, min_idle_hours: 1.0, max_idle_hours: 3.0, max_consecutive: 3,
               prompt: "用户已经一段时间没有回复了。请根据角色设定与近期对话，主动发起一条贴合角色的简短消息。",
@@ -638,10 +638,18 @@ async function renderPersonaEdit(data) {
         <label class="switch-wrap"><input type="checkbox" id="pe-mem-inc" ${p.memory?.include_in_prompt !== false ? "checked" : ""}><span class="switch-track"></span></label>
       </div></div>
       <div class="form-hint">开启后将所有记忆注入 LLM 上下文；关闭后 AI 看不到已有记忆，也无法更新它们</div>
-      <div class="form-group"><div class="form-row"><label>提醒轮数</label>
+      <div class="form-group"><div class="form-row"><label>触发方式</label>
+        <select id="pe-mem-trigger-mode" onchange="PawzoChat.onPeMemTriggerModeChange()">
+          <option value="remind" ${(p.memory?.trigger_mode || "remind") !== "summarize" ? "selected" : ""}>提醒 AI 记录（默认）</option>
+          <option value="summarize" ${p.memory?.trigger_mode === "summarize" ? "selected" : ""}>自动总结对话</option>
+        </select>
+      </div></div>
+      <div class="form-group"><div class="form-row"><label>触发轮数</label>
         <div class="stepper"><button onclick="PawzoChat.step('pe-mem-trigger',-1,0)">−</button><span class="stepper-val" id="pe-mem-trigger">${p.memory?.trigger_rounds || 0}</span><button onclick="PawzoChat.step('pe-mem-trigger',1,0)">+</button></div>
       </div></div>
-      <div class="form-hint">设置 N &gt; 0 时，AI 每 N 轮对话未记录记忆则收到一次提醒；设为 0 禁用提醒</div>
+      <div class="form-hint" id="pe-mem-trigger-hint">${(p.memory?.trigger_mode || "remind") === "summarize"
+        ? "每积累 N 轮未总结的对话，自动调用一次 LLM 将其总结为一条记忆；设为 0 禁用自动总结（AI 仍可通过工具主动记录，主动记录后计数顺延）"
+        : "设置 N > 0 时，AI 每 N 轮对话未记录记忆则收到一次提醒；设为 0 禁用提醒"}</div>
       ${!isNew && p.id ? `<div style="padding:8px 16px 12px">
         <button class="btn-outline" onclick="PawzoChat.pushPage('memoryManage',{personaId:'${p.id}'})" style="width:100%">管理记忆 (${p.memory_count || 0} 条)</button>
       </div>` : ''}
@@ -664,7 +672,7 @@ async function renderPersonaEdit(data) {
       const limitNote = ch === "wechat" ? `<div class="form-hint" style="background:var(--primary-light);color:var(--text-2);padding:10px 12px;margin:0 16px 4px;border-radius:8px;line-height:1.6">
         <div style="color:var(--primary);font-weight:500;margin-bottom:2px">微信通道限制</div>
         · 只能在用户最近一次消息 <b>24 小时内</b> 回复，超时后该角色的主动消息会被跳过<br>
-        · 用户每次发消息后，微信只展示机器人 <b>前 10 条</b> 连续回复，后续消息要等用户再次发言才会重置；建议"连续上限"不要超过 10
+        · 用户每次发消息后，微信最多接受机器人 <b>10 条</b> 连续回复；配额用完后主动消息会自动跳过，等用户再次发言后恢复
       </div>` : '';
       return `<div class="card" ${cardStyle}>
       <div class="card-header">主动消息</div>
@@ -1027,6 +1035,7 @@ export async function savePersona(isNew) {
       max_memories: parseInt($("pe-mem-max").textContent) || 50,
       include_in_prompt: $("pe-mem-inc").checked,
       trigger_rounds: parseInt($("pe-mem-trigger").textContent) || 0,
+      trigger_mode: $("pe-mem-trigger-mode")?.value || "remind",
     },
     bound_worldbooks: [..._peBoundWorldbooks],
   };
@@ -1259,6 +1268,17 @@ export function onPeImgRefModeChange() {
   const block = $("pe-img-ref-custom-block");
   if (!sel || !block) return;
   block.style.display = sel.value === "custom" ? "" : "none";
+}
+
+/* ---- Memory trigger-mode controls ---- */
+
+export function onPeMemTriggerModeChange() {
+  const sel = $("pe-mem-trigger-mode");
+  const hint = $("pe-mem-trigger-hint");
+  if (!sel || !hint) return;
+  hint.textContent = sel.value === "summarize"
+    ? "每积累 N 轮未总结的对话，自动调用一次 LLM 将其总结为一条记忆；设为 0 禁用自动总结（AI 仍可通过工具主动记录，主动记录后计数顺延）"
+    : "设置 N > 0 时，AI 每 N 轮对话未记录记忆则收到一次提醒；设为 0 禁用提醒";
 }
 
 export async function onPeImgRefFileSelected(input) {

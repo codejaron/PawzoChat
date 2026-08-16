@@ -257,7 +257,7 @@ PawzoChat/
 - **自定义** — 填写任意 OpenAI 兼容 Base URL + API Key
 
 生图后端：OpenAI Image / NanoBanana (Gemini) / NovelAI
-语音后端：MiniMax 原生 / OpenAI 兼容 TTS
+语音后端：MiniMax 原生 / MiMo 原生 / OpenAI 兼容 TTS
 
 ## 文档
 

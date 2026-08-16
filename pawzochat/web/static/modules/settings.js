@@ -18,7 +18,7 @@
 import { avatarHtml, formatTime, esc, escAttr, jsArg, iconHtml, voiceOptionsHtml, voiceCatalogFor } from "./utils.js";
 import { api, downloadFile } from "./api.js";
 import { state, $, content, sidebar } from "./state.js";
-import { toast, confirm, showSheet, closeOverlay, showLoading, hideLoading } from "./ui.js";
+import { toast, confirm, showSheet, closeOverlay, showLoading, hideLoading, setOverlayDismissible } from "./ui.js";
 import {
   setTopBar, pushPage, goBack,
   registerTabRenderer, registerPageRenderer,
@@ -45,7 +45,7 @@ async function renderSettings() {
 
   let updateDot = "";
   try {
-    const u = await api.get("/api/update/check");
+    const u = await api.get("/api/update/check", { bypassCache: true });
     state._updateInfo = u;
     if (u.download_state) state._updateState = u.download_state;
     if (u.has_update) updateDot = `<span class="update-dot"></span>`;
@@ -1546,6 +1546,7 @@ function _voicePresetLabel(id) {
 
 const _VOICE_TYPE_SHORT_LABEL = {
   minimaxi_tts: "MiniMax 原生",
+  mimo_tts: "MiMo 原生",
   openai_tts: "OpenAI 兼容",
 };
 function _voiceTypeLabel(type) {
@@ -2085,7 +2086,7 @@ function renderSettingsChat() {
     `<button class="btn-text" onclick="PawzoChat.saveSettingsChat()" style="font-size:15px;font-weight:500">保存</button>`
   );
   const s = state.settings?.chat || {};
-  const maxRounds = s.max_context_rounds || 5;
+  const maxRounds = s.max_context_rounds || 20;
   content().innerHTML = `<div class="page">
     <div class="card">
       <div class="card-header">上下文</div>
@@ -2889,7 +2890,7 @@ async function renderSettingsAbout() {
   const u = state._updateInfo || {};
   let updateState = u.download_state || state._updateState || null;
   try {
-    updateState = _applyUpdateState(await api.get("/api/update/state"));
+    updateState = _applyUpdateState(await api.get("/api/update/state", { bypassCache: true }));
   } catch (_) {
     updateState = _applyUpdateState(updateState);
   }
@@ -3127,7 +3128,9 @@ async function _pollUpdateState(timeoutMs = 180000) {
 
   while (state._updatePollToken === token && Date.now() < deadline) {
     try {
-      const updateState = _applyUpdateState(await api.get("/api/update/state"));
+      // Bypass the SWR cache: a hit would return last cycle's payload and
+      // yank the progress bar backwards against the live SSE updates.
+      const updateState = _applyUpdateState(await api.get("/api/update/state", { bypassCache: true }));
       onUpdateProgress(updateState);
       if (updateState.ready || updateState.error) return updateState;
     } catch (_) { /* silent */ }
@@ -3143,7 +3146,7 @@ export async function checkForUpdate() {
   }
   toast("正在检查更新…", "info");
   try {
-    const u = await api.get("/api/update/check");
+    const u = await api.get("/api/update/check", { bypassCache: true });
     state._updateInfo = u;
     _applyUpdateState(u.download_state);
     if (u.reason === "dev_mode") {
@@ -3165,6 +3168,11 @@ export async function checkForUpdate() {
 export async function startUpdateDownload() {
   const u = state._updateInfo;
   if (!u || !u.download_available) return;
+  // Guard against rapid double-clicks triggering duplicate download requests
+  if (state._updateListening || state._updateState?.stage === "downloading") {
+    toast("下载已在进行中", "info");
+    return;
+  }
 
   showSheet(`<div style="padding:24px">
     <div class="sheet-title">下载更新</div>
@@ -3179,7 +3187,7 @@ export async function startUpdateDownload() {
       <button onclick="PawzoChat.applyUpdate()" style="width:100%;padding:10px;border:none;border-radius:var(--radius-btn);background:var(--primary);color:#fff;font-size:15px;cursor:pointer;font-family:var(--font)">立即重启更新</button>
     </div>
     <button id="update-cancel-btn" class="btn-text" onclick="PawzoChat.closeOverlay()" style="margin-top:12px;width:100%">取消</button>
-  </div>`);
+  </div>`, undefined, { dismissOverlay: false });
 
   state._updateListening = true;
   _applyUpdateState({ stage: "downloading", progress: 0, ready: false, error: "" });
@@ -3222,6 +3230,7 @@ export function onUpdateProgress(data) {
       cancel.textContent = "关闭";
       cancel.style.display = "";
     }
+    setOverlayDismissible(true);
     state._updateListening = false;
     state._updatePollToken = null;
     toast("更新失败: " + updateState.error, "error");
@@ -3240,7 +3249,10 @@ export function onUpdateProgress(data) {
   } else if (updateState.ready) {
     if (text) text.textContent = "下载完成";
     if (done) done.style.display = "";
-    if (cancel) cancel.style.display = "none";
+    if (cancel) {
+      cancel.textContent = "稍后再说";
+      cancel.style.display = "";
+    }
     state._updateListening = false;
     state._updatePollToken = null;
   } else {

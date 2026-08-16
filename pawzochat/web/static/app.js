@@ -20,7 +20,7 @@
 import { esc, iconHtml } from "./modules/utils.js";
 import { api } from "./modules/api.js";
 import { state, sidebar } from "./modules/state.js";
-import { closeOverlay, closeConfirm, step, toast, showSheet } from "./modules/ui.js";
+import { closeOverlay, closeConfirm, overlayClick, step, toast, showSheet } from "./modules/ui.js";
 import { openImagePreview, closeImagePreview } from "./modules/image_preview.js";
 import {
   setTopBar, switchTab, goBack, pushPage,
@@ -63,6 +63,7 @@ import {
   personaExportPick, _personaExportGo,
   _personaExportCoverSelected, _personaExportCoverReset, _personaExportPngGo,
   onPeImgRefModeChange, onPeImgRefFileSelected, deletePersonaRefImage,
+  onPeMemTriggerModeChange,
   onPersonaVoiceProviderChange, onPersonaVoiceModelChange,
 } from "./modules/contacts.js";
 
@@ -268,7 +269,7 @@ function initSSE() {
 
 window.PawzoChat = {
   switchTab, goBack, pushPage,
-  closeOverlay, closeConfirm,
+  closeOverlay, closeConfirm, overlayClick,
   openImagePreview, closeImagePreview,
   newConversation, startChat, openChat,
   filterConvs, chatMore, clearChat, deleteChat,
@@ -296,6 +297,7 @@ window.PawzoChat = {
   personaExportPick, _personaExportGo,
   _personaExportCoverSelected, _personaExportCoverReset, _personaExportPngGo,
   onPeImgRefModeChange, onPeImgRefFileSelected, deletePersonaRefImage,
+  onPeMemTriggerModeChange,
   addAccount, openAccount, deleteAccount, saveAccountNote, skipAccountNote, confirmAccountNote,
   selectChannelType, submitFormAccount,
   saveProvider, deleteProvider,
@@ -405,7 +407,7 @@ async function checkUpdateOnStartup() {
 
   for (let i = 0; i < maxRetries; i++) {
     try {
-      const u = await api.get("/api/update/check");
+      const u = await api.get("/api/update/check", { bypassCache: true });
       if (u.checking) {
         await new Promise(r => setTimeout(r, retryDelay));
         continue;
@@ -479,7 +481,7 @@ function _showUpdateFoundDialog(u) {
       <button onclick="PawzoChat.closeOverlay()" style="flex:1;padding:10px;border:none;border-radius:var(--radius-btn);background:var(--bg);color:var(--text-2);font-size:15px;cursor:pointer;font-family:var(--font)">稍后再说</button>
       ${actionBtn}
     </div>
-  </div>`);
+  </div>`, null, { dismissOverlay: false });
 }
 
 document.addEventListener("DOMContentLoaded", () => {
