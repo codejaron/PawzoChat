@@ -106,6 +106,12 @@ class ReplyDispatcher:
             # failures even though the message was persisted.
             if delivered:
                 delivered_messages.append(stored)
+                push_service = getattr(self._app, "web_push_service", None)
+                if push_service:
+                    push_service.enqueue_assistant_message(
+                        persona_id,
+                        stored,
+                    )
 
             self._app.extension_manager.dispatch_reply_sent(
                 ReplySentEvent(

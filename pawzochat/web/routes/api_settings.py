@@ -23,6 +23,7 @@ import random
 import re
 import secrets
 import socket
+from urllib.parse import urlsplit
 
 from flask import Blueprint, jsonify, request
 
@@ -33,7 +34,7 @@ from pawzochat.web.routes import get_app
 api_settings_bp = Blueprint("api_settings", __name__)
 
 EXPOSED_SECTIONS = [
-    "chat", "reply", "web", "theme",
+    "chat", "reply", "web", "theme", "notifications",
 ]
 
 
@@ -54,6 +55,12 @@ def _clean_active_themes(names) -> list[str]:
     return out
 
 _PASSWORD_RE = re.compile(r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$")
+_WEB_PATCH_FIELDS = {
+    "password",
+    "public_enabled",
+    "reverse_proxy_enabled",
+    "public_base_url",
+}
 
 
 def _validate_password(pw: str) -> str | None:
@@ -79,6 +86,41 @@ def _generate_secret() -> str:
     return secrets.token_urlsafe(12)
 
 
+def _normalize_public_base_url(value: str) -> str | None:
+    """Validate and canonicalize the externally configured HTTPS origin."""
+    value = value.strip()
+    if not value:
+        return ""
+    if len(value) > 2048 or any(ch.isspace() for ch in value):
+        return None
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+        hostname = parsed.hostname
+    except ValueError:
+        return None
+    if (
+        parsed.scheme.lower() != "https"
+        or not parsed.netloc
+        or not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in ("", "/")
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+    try:
+        ascii_host = hostname.encode("idna").decode("ascii").lower()
+    except UnicodeError:
+        return None
+    if not ascii_host or len(ascii_host) > 253 or "\\" in ascii_host:
+        return None
+    host = f"[{ascii_host}]" if ":" in ascii_host else ascii_host
+    netloc = f"{host}:{port}" if port is not None else host
+    return f"https://{netloc}"
+
+
 @api_settings_bp.route("", methods=["GET"])
 def get_settings():
     app = get_app()
@@ -99,56 +141,116 @@ def get_settings():
 def update_settings():
     app = get_app()
     data = request.get_json(force=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "settings patch must be an object"}), 400
     is_public = request.environ.get("pawzochat.is_public", False)
 
-    if "web" in data:
-        if is_public:
-            return jsonify({"error": "网络设置仅限本地访问修改"}), 403
+    with app.config.lock:
+        if "web" in data:
+            if is_public:
+                return jsonify({"error": "网络设置仅限本地访问修改"}), 403
 
-        web_patch = data["web"]
+            web_patch = data["web"]
+            if not isinstance(web_patch, dict):
+                return jsonify({"error": "web settings must be an object"}), 400
+            unknown = set(web_patch) - _WEB_PATCH_FIELDS
+            if unknown:
+                return jsonify({"error": "unknown web setting"}), 400
 
-        if "password" in web_patch:
-            pw = web_patch["password"]
-            web_cfg = app.config._data.setdefault("web", {})
-            if pw:
-                err = _validate_password(pw)
-                if err:
-                    return jsonify({"error": err}), 400
-                web_cfg["password"] = hash_password(pw)
+            # Validate a private copy so a rejected multi-field request cannot
+            # leave partially mutated settings in memory.
+            web_cfg = copy.deepcopy(app.config.data.setdefault("web", {}))
+
+            if "password" in web_patch:
+                pw = web_patch["password"]
+                if not isinstance(pw, str):
+                    return jsonify({"error": "password must be a string"}), 400
+                if pw:
+                    err = _validate_password(pw)
+                    if err:
+                        return jsonify({"error": err}), 400
+                    web_cfg["password"] = hash_password(pw)
+                else:
+                    web_cfg["password"] = ""
+                    web_cfg["public_enabled"] = False
+
+            if "public_base_url" in web_patch:
+                public_base_url = web_patch["public_base_url"]
+                if not isinstance(public_base_url, str):
+                    return jsonify({
+                        "error": "public_base_url must be a string",
+                    }), 400
+                normalized = _normalize_public_base_url(public_base_url)
+                if normalized is None:
+                    return jsonify({
+                        "error": "公网 HTTPS 地址格式应为 https://chat.example.com，不能包含路径、参数或账号信息",
+                    }), 400
+                web_cfg["public_base_url"] = normalized
+
+            if "reverse_proxy_enabled" in web_patch:
+                reverse_proxy = web_patch["reverse_proxy_enabled"]
+                if not isinstance(reverse_proxy, bool):
+                    return jsonify({
+                        "error": "reverse_proxy_enabled must be a boolean",
+                    }), 400
+                web_cfg["reverse_proxy_enabled"] = reverse_proxy
+
+            if "public_enabled" in web_patch:
+                want_public = web_patch["public_enabled"]
+                if not isinstance(want_public, bool):
+                    return jsonify({"error": "public_enabled must be a boolean"}), 400
+                if want_public and not web_cfg.get("password"):
+                    return jsonify({"error": "请先设置访问密码"}), 400
+                web_cfg["public_enabled"] = want_public
+                if want_public:
+                    if not web_cfg.get("public_port"):
+                        web_cfg["public_port"] = _generate_port()
+                    if not web_cfg.get("public_secret"):
+                        web_cfg["public_secret"] = _generate_secret()
+
+            if (
+                web_cfg.get("public_enabled")
+                and web_cfg.get("reverse_proxy_enabled")
+                and not web_cfg.get("public_base_url")
+            ):
+                return jsonify({
+                    "error": "请先填写并保存公网 HTTPS 地址",
+                }), 400
+
+            app.config.data["web"] = web_cfg
+
+            data = {k: v for k, v in data.items() if k != "web"}
+
+        if "notifications" in data:
+            notification_patch = data["notifications"]
+            if not isinstance(notification_patch, dict):
+                return jsonify({
+                    "error": "notification settings must be an object",
+                }), 400
+            unknown = set(notification_patch) - {"hide_content"}
+            if unknown:
+                return jsonify({"error": "unknown notification setting"}), 400
+            if "hide_content" in notification_patch and not isinstance(
+                notification_patch["hide_content"], bool
+            ):
+                return jsonify({"error": "hide_content must be a boolean"}), 400
+
+        for key, value in data.items():
+            if key not in EXPOSED_SECTIONS:
+                continue
+            if key == "theme" and isinstance(value, dict):
+                theme_cfg = app.config.data.setdefault("theme", {})
+                if "mode" in value and value["mode"] in ("light", "dark", "auto"):
+                    theme_cfg["mode"] = value["mode"]
+                if "active" in value:
+                    theme_cfg["active"] = _clean_active_themes(value["active"])
+                continue
+            if isinstance(value, dict) and isinstance(app.config.data.get(key), dict):
+                app.config.data[key].update(value)
             else:
-                web_cfg["password"] = ""
-                web_cfg["public_enabled"] = False
+                app.config.data[key] = value
 
-        if "public_enabled" in web_patch:
-            want_public = bool(web_patch["public_enabled"])
-            if want_public and not app.config.get("web", "password", default=""):
-                return jsonify({"error": "请先设置访问密码"}), 400
-            app.config._data.setdefault("web", {})["public_enabled"] = want_public
-            if want_public:
-                web_cfg = app.config._data["web"]
-                if not web_cfg.get("public_port"):
-                    web_cfg["public_port"] = _generate_port()
-                if not web_cfg.get("public_secret"):
-                    web_cfg["public_secret"] = _generate_secret()
-
-        data = {k: v for k, v in data.items() if k != "web"}
-
-    for key, value in data.items():
-        if key not in EXPOSED_SECTIONS:
-            continue
-        if key == "theme" and isinstance(value, dict):
-            theme_cfg = app.config._data.setdefault("theme", {})
-            if "mode" in value and value["mode"] in ("light", "dark", "auto"):
-                theme_cfg["mode"] = value["mode"]
-            if "active" in value:
-                theme_cfg["active"] = _clean_active_themes(value["active"])
-            continue
-        if isinstance(value, dict) and isinstance(app.config._data.get(key), dict):
-            app.config._data[key].update(value)
-        else:
-            app.config._data[key] = value
-
-    app.config.save()
+        app.config.save()
 
     result = {"ok": True}
     if not is_public:
@@ -156,6 +258,9 @@ def update_settings():
         web_out["has_password"] = bool(web_out.get("password"))
         web_out.pop("password", None)
         result["web"] = web_out
+    result["notifications"] = copy.deepcopy(
+        app.config.get("notifications", default={})
+    )
     return jsonify(result)
 
 
@@ -164,10 +269,15 @@ def regenerate_public():
     if request.environ.get("pawzochat.is_public", False):
         return jsonify({"error": "网络设置仅限本地访问修改"}), 403
     app = get_app()
-    web_cfg = app.config._data.setdefault("web", {})
-    web_cfg["public_port"] = _generate_port()
-    web_cfg["public_secret"] = _generate_secret()
-    app.config.save()
+    with app.config.lock:
+        web_cfg = app.config.data.setdefault("web", {})
+        old_secret = web_cfg.get("public_secret", "")
+        web_cfg["public_port"] = _generate_port()
+        web_cfg["public_secret"] = _generate_secret()
+        app.config.save()
+
+    if old_secret and app.web_push_service:
+        app.web_push_service.remove_scope_path(f"/{old_secret}")
 
     web_out = copy.deepcopy(web_cfg)
     web_out["has_password"] = bool(web_out.get("password"))

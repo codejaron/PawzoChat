@@ -23,6 +23,7 @@ import queue
 import threading
 
 MAX_SSE_CLIENTS = 20
+SSE_HEARTBEAT_SECONDS = 15
 
 _clients: list[queue.Queue] = []
 _clients_lock = threading.Lock()
@@ -41,7 +42,15 @@ def sse_stream():
         _clients.append(q)
     try:
         while True:
-            data = q.get()
+            try:
+                data = q.get(timeout=SSE_HEARTBEAT_SECONDS)
+            except queue.Empty:
+                # A periodic write lets the WSGI server discover that a tab,
+                # proxy, or network connection disappeared. Without it the
+                # generator can block on q.get() forever, permanently holding
+                # one Cheroot worker after every EventSource reconnect.
+                yield ": keepalive\n\n"
+                continue
             yield f"data: {data}\n\n"
     finally:
         with _clients_lock:

@@ -32,7 +32,7 @@ import { applyThemeFromState, watchSystemTheme } from "./modules/theme.js";
 import {
   chatPersonaId, renderChatList, refreshChatMessages,
   filterConvs, newConversation, startChat, openChat,
-  chatMore, clearChat, deleteChat,
+  chatMore, toggleChatMute, clearChat, deleteChat,
   linkWechat, doLinkWechat, unlinkWechat, viewPersonaFromChat, viewMemoryFromChat,
   openHistoryEdit,
   onChatInput, onChatKey, sendChat,
@@ -97,7 +97,8 @@ import {
   themeImportPick, themeImportSubmit,
   themeSelectionEnter, themeSelectionExit, themeSelectionToggle, themeSelectionToggleAll,
   themeExportSelected,
-  savePassword, clearPassword, togglePublicAccess,
+  savePassword, clearPassword, togglePublicAccess, toggleReverseProxyMode,
+  savePublicBaseUrl,
   cancelPublicToggle, confirmPublicToggle,
   regeneratePublicAccess, copyPublicUrl, copyPublicField,
   emojiAddGroup, emojiConfirmAddGroup,
@@ -175,6 +176,12 @@ import {
 import {
   pwOnProviderChange, pwGenerate, pwCreatePersona,
 } from "./modules/persona_writer.js";
+
+import {
+  initNotifications,
+  toggleDeviceNotifications,
+  toggleNotificationContentPrivacy,
+} from "./modules/notifications.js";
 
 /* ============ Discover Tab ============ */
 
@@ -272,7 +279,7 @@ window.PawzoChat = {
   closeOverlay, closeConfirm, overlayClick,
   openImagePreview, closeImagePreview,
   newConversation, startChat, openChat,
-  filterConvs, chatMore, clearChat, deleteChat,
+  filterConvs, chatMore, toggleChatMute, clearChat, deleteChat,
   linkWechat, doLinkWechat, unlinkWechat, viewPersonaFromChat, viewMemoryFromChat,
   openHistoryEdit,
   heDateChange,
@@ -326,7 +333,8 @@ window.PawzoChat = {
   themeImportPick, themeImportSubmit,
   themeSelectionEnter, themeSelectionExit, themeSelectionToggle, themeSelectionToggleAll,
   themeExportSelected,
-  savePassword, clearPassword, togglePublicAccess,
+  savePassword, clearPassword, togglePublicAccess, toggleReverseProxyMode,
+  savePublicBaseUrl,
   cancelPublicToggle, confirmPublicToggle,
   regeneratePublicAccess, copyPublicUrl, copyPublicField,
   emojiAddGroup, emojiConfirmAddGroup,
@@ -363,6 +371,7 @@ window.PawzoChat = {
   finishQuickSetup,
   checkForUpdate, startUpdateDownload, applyUpdate,
   toggleTelemetry,
+  toggleDeviceNotifications, toggleNotificationContentPrivacy,
   wbImportPick, wbImportSubmit,
   wbSave, wbDeleteCurrent,
   wbAddSection, wbRemoveSection,
@@ -489,6 +498,7 @@ document.addEventListener("DOMContentLoaded", () => {
   loadThemeSettings();
   switchTab("chat");
   initSSE();
+  initNotifications();
   checkAndShowSetup();
   checkUpdateOnStartup();
 });

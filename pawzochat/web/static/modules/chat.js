@@ -199,6 +199,10 @@ export async function startChat(personaId, hasConv) {
         toast(res.data?.error || "创建失败", "error");
         return;
       }
+      state.conversations = [
+        res.data,
+        ...state.conversations.filter(c => c.persona_id !== personaId),
+      ];
     } catch (e) {
       toast("创建失败", "error");
       return;
@@ -651,6 +655,8 @@ async function renderChatWindow(data) {
 
   try {
     const res = await api.get(`/api/conversations/${chatPersonaId}/messages?rounds=10`);
+    const conv = state.conversations.find(c => c.persona_id === chatPersonaId);
+    if (conv) conv.notification_muted = !!res.notification_muted;
     renderMessages(res.messages || []);
   } catch (e) { toast("加载消息失败", "error"); }
 
@@ -1111,9 +1117,11 @@ export async function sendSticker(stickerUrl) {
 export function chatMore() {
   const conv = state.conversations.find(c => c.persona_id === chatPersonaId);
   const linked = conv?.wechat_linked;
+  const muted = !!conv?.notification_muted;
   let items = `
     <div class="sheet-item" onclick="PawzoChat.viewPersonaFromChat()">${iconHtml("ri-id-card-line")}<span>查看角色资料</span></div>
     <div class="sheet-item" onclick="PawzoChat.viewMemoryFromChat()">${iconHtml("ri-brain-line")}<span>查看记忆</span></div>
+    <div class="sheet-item" onclick="PawzoChat.toggleChatMute()">${iconHtml(muted ? "ri-notification-line" : "ri-notification-off-line")}<span>${muted ? "关闭免打扰" : "开启免打扰"}</span></div>
     <div class="sheet-item" onclick="PawzoChat.openHistoryEdit()">${iconHtml("ri-edit-line")}<span>编辑历史消息</span></div>
     <div class="sheet-item" onclick="PawzoChat.clearChat()">${iconHtml("ri-delete-bin-line")}<span>清空聊天记录</span></div>
     <div class="sheet-item danger" onclick="PawzoChat.deleteChat()">${iconHtml("ri-close-line")}<span>删除对话</span></div>
@@ -1126,6 +1134,28 @@ export function chatMore() {
   }
 
   showSheet(`<div class="sheet-title">更多操作</div>${items}<div class="sheet-cancel" onclick="PawzoChat.closeOverlay()">取消</div>`);
+}
+
+export async function toggleChatMute() {
+  const conv = state.conversations.find(c => c.persona_id === chatPersonaId);
+  if (!conv) {
+    closeOverlay();
+    toast("对话不存在", "error");
+    return;
+  }
+  const muted = !conv.notification_muted;
+  closeOverlay();
+  try {
+    const res = await api.patch(
+      `/api/conversations/${encodeURIComponent(chatPersonaId)}/notification-settings`,
+      { muted },
+    );
+    if (res.status >= 400) throw new Error(res.data?.error || "设置失败");
+    conv.notification_muted = muted;
+    toast(muted ? "已开启免打扰" : "已关闭免打扰", "success");
+  } catch (error) {
+    toast(error.message || "设置失败", "error");
+  }
 }
 
 export async function clearChat() {

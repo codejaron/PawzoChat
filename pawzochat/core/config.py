@@ -76,6 +76,19 @@ DEFAULTS: dict = {
         "public_enabled": False,
         "public_port": 0,
         "public_secret": "",
+        # Bind the authenticated HTTPS origin to loopback only when an
+        # external trusted-HTTPS entry point is configured for Web Push.
+        "reverse_proxy_enabled": False,
+        # User-visible HTTPS origin configured on the external reverse proxy.
+        # PawzoChat does not provision the domain; it uses this value as the
+        # canonical address shown to users and in startup diagnostics.
+        "public_base_url": "",
+    },
+    "notifications": {
+        # This is global because notification privacy should be consistent on
+        # every subscribed device. Device enablement itself lives in the Push
+        # subscription store and is never duplicated into config.
+        "hide_content": False,
     },
     "theme": {
         "mode": "light",       # "light" | "dark" | "auto"

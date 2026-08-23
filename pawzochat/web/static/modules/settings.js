@@ -126,6 +126,10 @@ async function renderSettings() {
         <div class="row-icon indigo">${iconHtml("ri-edit-line")}</div>
         <span class="row-label">回复设置</span><span class="row-arrow">›</span>
       </div>
+      <div class="card-row" onclick="PawzoChat.pushPage('settingsNotifications')">
+        <div class="row-icon cyan">${iconHtml("ri-notification-3-line")}</div>
+        <span class="row-label">通知</span><span class="row-arrow">›</span>
+      </div>
       <div class="card-row" onclick="PawzoChat.pushPage('settingsTheme')">
         <div class="row-icon purple">${iconHtml("ri-palette-line")}</div>
         <span class="row-label">主题</span><span class="row-arrow">›</span>
@@ -2648,15 +2652,19 @@ function renderSettingsNetwork() {
   const w = state.settings?.web || {};
   const hasPw = !!w.has_password;
   const publicOn = !!w.public_enabled;
+  const reverseProxy = !!w.reverse_proxy_enabled;
+  const publicBaseUrl = String(w.public_base_url || "");
 
   let publicBlock = "";
   if (publicOn) {
     const port = w.public_port || "—";
     const secret = w.public_secret || "—";
-    const url = `https://你的公网IP:${port}/${secret}`;
+    const url = reverseProxy && publicBaseUrl
+      ? `${publicBaseUrl.replace(/\/$/, "")}/${secret}`
+      : "";
     publicBlock = `
       <div class="card" style="margin-top:12px">
-        <div class="card-header">公网访问信息</div>
+        <div class="card-header">${reverseProxy ? "反向代理源站信息" : "公网访问信息"}</div>
         <div class="form-group"><div class="form-row">
           <label>公网端口</label>
           <span class="row-value" style="flex:1;text-align:right;user-select:text;margin-right:8px">${esc(String(port))}</span>
@@ -2672,11 +2680,14 @@ function renderSettingsNetwork() {
         </div>
       </div>
       <div class="card" style="margin-top:12px">
-        <div class="card-header">访问地址预览</div>
-        <div style="padding:4px 16px 12px;display:flex;align-items:center;gap:8px">
-          <span style="flex:1;word-break:break-all;font-size:14px;color:var(--text-2);user-select:text">${esc(url)}</span>
-          <button class="btn-outline" onclick="PawzoChat.copyPublicUrl()" style="white-space:nowrap">复制</button>
-        </div>
+        <div class="card-header">${reverseProxy ? "最终访问地址" : "直接访问地址格式"}</div>
+        ${reverseProxy ? (url ? `
+          <div style="padding:4px 16px 12px;display:flex;align-items:center;gap:8px">
+            <span style="flex:1;word-break:break-all;font-size:14px;color:var(--text-2);user-select:text">${esc(url)}</span>
+            <button class="btn-outline" onclick="PawzoChat.copyPublicUrl()" style="white-space:nowrap">复制</button>
+          </div>` : `
+          <div style="padding:4px 16px 12px;color:var(--danger);font-size:13px">尚未配置公网 HTTPS 地址，当前没有可用的远程访问链接。</div>`)
+          : `<div style="padding:4px 16px 12px;font-size:14px;color:var(--text-2);user-select:text;word-break:break-all">https://&lt;本机公网 IP&gt;:${esc(String(port))}/${esc(secret)}</div>`}
       </div>`;
   }
 
@@ -2690,11 +2701,34 @@ function renderSettingsNetwork() {
     </div>
     <div class="card" style="margin-top:12px">
       <div class="form-group"><div class="form-row">
-        <label>对公网开放 (实验性功能)</label>
+        <label>使用可信 HTTPS 反向代理</label>
+        <label class="switch-wrap"><input type="checkbox" id="sn-reverse-proxy" ${reverseProxy ? "checked" : ""}
+          onchange="PawzoChat.toggleReverseProxyMode()"><span class="switch-track"></span></label>
+      </div></div>
+      <div class="form-hint">${reverseProxy
+        ? "开启：公网端口只监听本机，由你使用的公网服务提供 HTTPS 地址；浏览器通知需要此模式。"
+        : "关闭：保持原有的“公网 IP + 端口”直连方式；自签名证书不满足浏览器通知要求，但不影响原有远程访问功能。"}</div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="card-header">公网 HTTPS 地址</div>
+      <div class="form-group"><div class="form-row" style="gap:10px">
+        <input type="url" id="sn-public-base-url" value="${esc(publicBaseUrl)}"
+          placeholder="https://chat.example.com" autocomplete="url"
+          onkeydown="if(event.key==='Enter')PawzoChat.savePublicBaseUrl()"
+          style="flex:1;min-width:0;text-align:left">
+        <button class="btn-outline" onclick="PawzoChat.savePublicBaseUrl()" style="white-space:nowrap">保存</button>
+      </div></div>
+      <div class="form-hint">这里填写已在反向代理中绑定的完整 HTTPS 地址，不含 PawzoChat 随机路径。PawzoChat 不会购买域名或自动创建隧道。</div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="form-group"><div class="form-row">
+        <label>启用远程访问 (实验性功能)</label>
         <label class="switch-wrap"><input type="checkbox" id="sn-public" ${publicOn ? "checked" : ""} ${hasPw ? "" : "disabled"}
           onchange="PawzoChat.togglePublicAccess()"><span class="switch-track"></span></label>
       </div></div>
-      ${hasPw ? "" : `<div class="form-hint">需先设置公网访问密码</div>`}
+      ${hasPw ? (reverseProxy && !publicBaseUrl
+        ? `<div class="form-hint" style="color:var(--danger)">需先填写并保存公网 HTTPS 地址</div>`
+        : "") : `<div class="form-hint">需先设置公网访问密码</div>`}
     </div>
     ${publicBlock}
   </div>`;
@@ -2756,10 +2790,51 @@ export async function clearPassword() {
   finally { hideLoading(); }
 }
 
+export async function savePublicBaseUrl() {
+  const input = $("sn-public-base-url");
+  if (!input) return;
+  const value = input.value.trim();
+  if (value) {
+    let parsed;
+    try { parsed = new URL(value); } catch (_) {
+      toast("请输入完整地址，例如 https://chat.example.com", "error");
+      return;
+    }
+    if (parsed.protocol !== "https:" || parsed.pathname !== "/"
+        || parsed.search || parsed.hash || parsed.username || parsed.password) {
+      toast("地址必须以 https:// 开头，且不能包含路径、参数或账号信息", "error");
+      return;
+    }
+  }
+  showLoading("保存中…");
+  try {
+    const res = await api.patch("/api/settings", {
+      web: { public_base_url: value },
+    });
+    if (res.status >= 400) throw new Error(res.data?.error || "保存失败");
+    if (!res.data?.web) throw new Error("服务端未返回网络设置");
+    state.settings = state.settings || {};
+    state.settings.web = res.data.web;
+    toast(value ? "公网 HTTPS 地址已保存" : "公网 HTTPS 地址已清除", "success");
+    renderSettingsNetwork();
+  } catch (error) {
+    toast(error.message || "保存失败", "error");
+  } finally {
+    hideLoading();
+  }
+}
+
 export async function togglePublicAccess() {
   const publicEnabled = !!$("sn-public")?.checked;
   if (!publicEnabled) {
     await _doTogglePublic(false);
+    return;
+  }
+  const web = state.settings?.web || {};
+  if (web.reverse_proxy_enabled && !web.public_base_url) {
+    if ($("sn-public")) $("sn-public").checked = false;
+    toast("请先填写并保存公网 HTTPS 地址", "error");
+    $("sn-public-base-url")?.focus();
     return;
   }
   _showPublicWarning();
@@ -2771,6 +2846,7 @@ let _publicWarningConfirmed = false;
 function _showPublicWarning() {
   _publicWarningConfirmed = false;
   let countdown = 10;
+  const reverseProxy = !!state.settings?.web?.reverse_proxy_enabled;
 
   showSheet(`<div style="padding:20px">
     <div style="text-align:center;margin-bottom:4px">
@@ -2780,13 +2856,13 @@ function _showPublicWarning() {
     </div>
     <div class="sheet-title" style="color:var(--danger)">安全风险提醒</div>
     <div style="font-size:13px;color:var(--text-2);line-height:1.7;padding:0 8px;margin-bottom:20px">
-      <p style="margin-bottom:8px">开启公网访问后，您的 PawzoChat 面板将可通过互联网访问。虽然已有以下安全措施：</p>
+      <p style="margin-bottom:8px">开启远程访问后，您的 PawzoChat 面板可通过网络访问。当前采用${reverseProxy ? "可信 HTTPS 反向代理" : "直接公网暴露"}模式，并包含以下安全措施：</p>
       <div style="margin-bottom:8px;padding-left:4px">
-        <div style="margin-bottom:2px">• 自签名 HTTPS 加密传输</div>
+        <div style="margin-bottom:2px">• ${reverseProxy ? "源站仅监听本机，由外层代理提供受信任 HTTPS" : "自签名 HTTPS 加密传输"}</div>
         <div style="margin-bottom:2px">• 随机端口 + 随机访问路径</div>
         <div>• 访问密码保护</div>
       </div>
-      <p>但仍<strong style="color:var(--danger)">无法保证 100% 安全</strong>。自签名证书会被浏览器标记为"不受信任"，且服务暴露在公网可能面临未知安全威胁。请确保您充分理解并愿意自行承担相关风险。</p>
+      <p>但仍<strong style="color:var(--danger)">无法保证 100% 安全</strong>。${reverseProxy ? "反向代理域名及隧道配置错误仍可能扩大暴露范围。" : "自签名证书会被浏览器标记为“不受信任”，且服务直接暴露在公网。"}请确保您理解访问范围和代理配置。</p>
     </div>
     <div style="display:flex;gap:12px">
       <button onclick="PawzoChat.cancelPublicToggle()" style="flex:1;padding:10px;border:none;border-radius:var(--radius-btn);background:var(--bg);color:var(--text-2);font-size:15px;cursor:pointer;font-family:var(--font)">取消</button>
@@ -2814,6 +2890,35 @@ function _showPublicWarning() {
       btn.style.cursor = "pointer";
     }
   }, 1000);
+}
+
+export async function toggleReverseProxyMode() {
+  const enabled = !!$("sn-reverse-proxy")?.checked;
+  if (enabled && state.settings?.web?.public_enabled
+      && !state.settings?.web?.public_base_url) {
+    if ($("sn-reverse-proxy")) $("sn-reverse-proxy").checked = false;
+    toast("请先填写并保存公网 HTTPS 地址", "error");
+    $("sn-public-base-url")?.focus();
+    return;
+  }
+  showLoading("保存中…");
+  try {
+    const res = await api.patch("/api/settings", {
+      web: { reverse_proxy_enabled: enabled },
+    });
+    if (res.status >= 400) throw new Error(res.data?.error || "保存失败");
+    if (!res.data?.web) throw new Error("服务端未返回网络设置");
+    state.settings = state.settings || {};
+    state.settings.web = res.data.web;
+    toast("已保存，请重启 PawzoChat 生效", "success");
+    renderSettingsNetwork();
+  } catch (error) {
+    const input = $("sn-reverse-proxy");
+    if (input) input.checked = !enabled;
+    toast(error.message || "保存失败", "error");
+  } finally {
+    hideLoading();
+  }
 }
 
 export function cancelPublicToggle() {
@@ -2861,7 +2966,14 @@ export async function regeneratePublicAccess() {
 
 export function copyPublicUrl() {
   const w = state.settings?.web || {};
-  const url = `https://你的公网IP:${w.public_port || ""}/${w.public_secret || ""}`;
+  const baseUrl = String(w.public_base_url || "").replace(/\/$/, "");
+  const url = w.reverse_proxy_enabled && baseUrl && w.public_secret
+    ? `${baseUrl}/${w.public_secret}`
+    : "";
+  if (!url) {
+    toast("尚未配置可用的公网 HTTPS 地址", "error");
+    return;
+  }
   navigator.clipboard.writeText(url).then(
     () => toast("已复制到剪贴板", "success"),
     () => toast("复制失败", "error"),

@@ -240,6 +240,7 @@ class ConversationStore:
                 "persona_id": pid,
                 "created_at": data.get("created_at", ""),
                 "updated_at": data.get("updated_at", ""),
+                "notification_muted": bool(data.get("notification_muted", False)),
                 # Kept for chat.js back-compat; true for any bound channel.
                 "wechat_linked": bool(link),
                 "linked_channel": link.get("channel", "") if link else "",
@@ -264,6 +265,7 @@ class ConversationStore:
                 "persona_id": persona_id,
                 "created_at": now,
                 "updated_at": now,
+                "notification_muted": False,
                 "channel_link": None,
                 "wechat_link": None,
                 "messages": [],
@@ -283,6 +285,7 @@ class ConversationStore:
                 "persona_id": persona_id,
                 "created_at": now,
                 "updated_at": now,
+                "notification_muted": False,
                 "channel_link": None,
                 "wechat_link": None,
                 "messages": [],
@@ -383,6 +386,27 @@ class ConversationStore:
             data["updated_at"] = _now_iso()
             self._write_file(persona_id, data)
             return True
+
+    def set_notification_muted(self, persona_id: str, muted: bool) -> bool:
+        """Set per-conversation notification DND without reordering the chat.
+
+        ``updated_at`` intentionally stays unchanged: changing a preference is
+        not a new chat activity and must not move the conversation in the list.
+        """
+        lock = self._get_lock(persona_id)
+        with lock:
+            data = self._read_file(persona_id)
+            if data is None:
+                return False
+            data["notification_muted"] = muted
+            self._write_file(persona_id, data)
+            return True
+
+    def notification_muted(self, persona_id: str) -> bool:
+        lock = self._get_lock(persona_id)
+        with lock:
+            data = self._read_file(persona_id)
+            return bool(data and data.get("notification_muted", False))
 
     @staticmethod
     def _resolve_message(

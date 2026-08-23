@@ -22,13 +22,13 @@ PawzoChat 是一个多通道、多人设的 LLM 对话系统。当前内建微�
 1. `ConfigManager` 加载 `data/config/config.yaml`，合并默认值并处理损坏配置恢复。
 2. 初始化 LLM、生图和语音 Provider；迁移旧绑定与明文面板密码。
 3. 启动 MCP Server，建立 `CapabilityAdapterRegistry`，注册生图、参考图查看、记忆记录/更新等内置工具。
-4. 创建记忆、世界书、聊天、朋友圈、回复分发、消息队列和主动消息服务。
+4. 创建记忆、世界书、聊天、朋友圈、Web Push、回复分发、消息队列和主动消息服务。
 5. 向 `ChannelRegistry` 注册 `web`、`wechat` 和 `qq` 三个内建通道。
 6. 加载运行时插件。插件可在此时注册 hook、LLM 工具或 `plugin:<id>` 通道。
 7. 启动消息队列、主动消息与朋友圈 worker，再恢复 `data/auth/accounts.json` 中的通道账号。
 8. 启动遥测服务（默认关闭）、本地/公网 Web Server 和打包版更新检查。
 
-关闭时会先通知通道离线，再停止 Web Server、各通道、后台服务、插件和 MCP；5 秒看门狗用于避免关机永久阻塞。
+关闭时会先通知通道离线，再停止 Web Server、各通道、后台服务（含 Web Push worker）、插件和 MCP；5 秒看门狗用于避免关机永久阻塞。
 
 ## 3. 对话主链路
 
@@ -157,7 +157,7 @@ Persona 在配置中分别绑定对话、生图和语音 Provider/模型。Promp
 - `personas`
 - `mcp_servers`、`capability_adapters`
 - `chat`、`reply`
-- `web`、`theme`
+- `web`、`theme`、`notifications`
 - `moments`、`telemetry`
 
 主要运行时数据：
@@ -183,6 +183,8 @@ data/
 ├── plugins/<directory_name>/                  # 运行时插件；实际标识取 manifest.id
 ├── profile/                                   # 用户资料与头像
 ├── prompts/<persona_id>.json                  # 对话/生图 Prompt 长文本
+├── push/subscriptions.json                    # 浏览器设备订阅与投递状态
+├── push/vapid_private_key.pem                 # 本机生成的 VAPID 私钥
 ├── telemetry_id.txt                           # 便携遥测 ID 副本
 └── theme/<name>/style.css                     # 自定义主题
 ```
@@ -195,4 +197,4 @@ data/
 - Web 前端是原生 JS/CSS，无 Node 构建步骤。
 - 插件只支持进程内 Python 模块，不提供隔离进程或安全沙箱。
 - QQ 当前仅处理 C2C 私聊，并禁止主动推送。
-- 公网面板使用自签名 TLS 与随机路径前缀；完整限制见网络安全文档。
+- 公网面板使用自签名 TLS 与随机路径前缀，也可仅监听 loopback 并由外层反向代理终止可信 TLS；完整限制见网络安全文档。

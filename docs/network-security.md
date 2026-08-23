@@ -1,6 +1,6 @@
 # 本地面板 / 公网面板访问与安全模型
 
-> 术语约定：本文使用“本地面板”表示仅绑定 `127.0.0.1` 的 HTTP 服务，使用“公网面板”表示绑定 `0.0.0.0` 的 HTTPS 服务。
+> 术语约定：本文使用“本地面板”表示仅绑定 `127.0.0.1` 的 HTTP 服务；“公网面板”表示带随机路径和密码认证的独立 HTTPS 服务。公网面板可直接绑定 `0.0.0.0`，也可在“可信 HTTPS 反向代理”模式下仅绑定 `127.0.0.1`。
 
 ## 双服务实例
 
@@ -8,7 +8,7 @@ PawzoChat 启动时最多创建两个 Cheroot WSGI Server，二者共享同一�
 
 | | 本地面板 | 公网面板 |
 | --- | --- | --- |
-| 绑定地址 | `127.0.0.1:web.port` | `0.0.0.0:web.public_port` |
+| 绑定地址 | `127.0.0.1:web.port` | 直接模式为 `0.0.0.0:web.public_port`；反向代理模式为 `127.0.0.1:web.public_port` |
 | 协议 | HTTP | HTTPS（自签名证书） |
 | 启动条件 | 始终启动 | `public_enabled=true`，且密码、端口、路径前缀均有效 |
 | 登录 | 免登录 | 必须通过密码登录 |
@@ -125,13 +125,43 @@ data/certs/server.key
 
 证书为 PawzoChat 自签名证书，浏览器首次访问通常会显示不受信任警告。它提供传输加密，但不提供公共 CA 身份背书；需要受信任证书、域名或反向代理时，应由部署者在 PawzoChat 外部配置。
 
+## 受信任 HTTPS 与浏览器通知
+
+浏览器通知依赖 Web Push。手机浏览器不会把“手动忽略自签名证书警告”视为可信安全上下文，因此直接访问 PawzoChat 的自签名公网地址不能启用通知。可通过 Cloudflare Tunnel 为 PawzoChat 提供稳定且受浏览器信任的 HTTPS 地址。
+
+### 使用 Cloudflare Tunnel
+
+前提：你的域名已经添加到 Cloudflare。
+
+如果还没有 Tunnel：
+
+1. 登录 Cloudflare，进入 `Networking → Tunnels`。
+2. 点击 `Create tunnel`，按页面提示在运行 PawzoChat 的电脑上安装并启动 `cloudflared`。
+3. 等 Tunnel 状态变为 `Healthy`。
+
+然后连接 PawzoChat：
+
+1. 打开刚创建的 Tunnel，进入 `Routes`。
+2. 点击 `Add route → Published application`。
+3. `Hostname` 填写你准备使用的域名，例如 `chat.example.com`。
+4. `Service URL` 填写 `https://127.0.0.1:<公网端口>`。其中“公网端口”是 PawzoChat“设置 → 网络设置”页面显示的数字；例如页面显示 `46447`，这里就填写 `https://127.0.0.1:46447`，不要附加随机路径。
+5. 展开 TLS 设置，开启 `No TLS Verify`。
+6. 保存后重启 PawzoChat。
+7. 打开页面显示的最终地址，例如 `https://chat.example.com/随机路径`。
+
+`No TLS Verify` 只用于 Cloudflare 连接本机 PawzoChat，不会关闭用户访问域名时的 HTTPS。
+
+不要把无密码的本地面板端口 `62000` 交给 Tunnel。也不要使用每次启动都会变化的临时域名；域名或随机路径改变后，浏览器会把它视为新的应用范围，需要重新订阅通知。重新生成 PawzoChat 随机路径时，服务会主动删除旧路径下的订阅。
+
+平台侧的用户操作不同：Windows 的 Chrome、Edge、Firefox 可直接开启；macOS 的 Safari 16.1+、Chrome、Edge、Firefox 可直接开启且不要求添加到程序坞；Android 的 Chrome、Edge、Firefox 等可直接授权且不要求添加到主屏幕；iPhone/iPad 需要 iOS/iPadOS 16.4+，必须先在 Safari 中“添加到主屏幕”，再从主屏幕图标打开并开启通知。最终仍以页面对当前浏览器的能力检测为准。
+
 `data/config/config.yaml` 中的密码是哈希，但 `public_secret` 不是加密凭据；`data/auth/accounts.json` 还包含通道令牌或 App Secret。应限制整个 `data/` 目录的读取权限，不要把它提交到公开仓库或直接共享。
 
 绑定 `0.0.0.0` 只代表监听所有网卡，不会自动完成防火墙放行、路由器端口转发或云安全组配置。公网暴露前还应确认：
 
 - 使用足够强且唯一的面板密码。
 - 公网路径未通过截图、日志或浏览器分享泄露。
-- 只开放实际使用的 `public_port`。
+- 直接模式只开放实际使用的 `public_port`；反向代理模式不要把该端口对外放行。
 - 能接受自签名证书的信任提示，或在外部终止可信 TLS。
 - 了解当前只有“连续 5 次失败后全局锁定”，没有按 IP、时间窗口或分布式限流。
 
@@ -154,6 +184,8 @@ web:
   public_enabled: false
   public_port: 0           # 启用时由设置 API 自动生成
   public_secret: ""        # 启用时由设置 API 自动生成
+  reverse_proxy_enabled: false
+  public_base_url: ""      # 外部反向代理实际提供的 HTTPS origin，不含随机路径
 ```
 
 相关实现：

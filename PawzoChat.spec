@@ -120,6 +120,9 @@ hiddenimports = [
     "miniaudio",
     "_cffi_backend",
     "pysilk",
+    "pywebpush",
+    "py_vapid",
+    "http_ece",
 ]
 
 a = Analysis(

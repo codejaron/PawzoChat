@@ -95,6 +95,7 @@ def create_conversation():
         "persona_name": _persona_name(app, persona_id),
         "created_at": conv["created_at"],
         "updated_at": conv["updated_at"],
+        "notification_muted": False,
         "wechat_linked": False,
         "last_message": None,
     }), 201
@@ -144,11 +145,27 @@ def get_messages(persona_id: str):
 
     return jsonify({
         "persona_id": persona_id,
+        "notification_muted": bool(conv.get("notification_muted", False)),
         # Key kept as wechat_link for frontend back-compat; carries the channel.
         "wechat_link": link_info,
         "messages": messages,
         "has_more": has_more,
     })
+
+
+@api_conversations_bp.route("/<persona_id>/notification-settings", methods=["PATCH"])
+def update_notification_settings(persona_id: str):
+    app = get_app()
+    data = request.get_json(force=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "request body must be an object"}), 400
+    muted = data.get("muted")
+    if not isinstance(muted, bool):
+        return jsonify({"error": "muted must be a boolean"}), 400
+    if not app.conversation_store.set_notification_muted(persona_id, muted):
+        return jsonify({"error": "Conversation not found"}), 404
+    broadcast("conversation_updated", persona_id=persona_id)
+    return jsonify({"ok": True, "notification_muted": muted})
 
 
 @api_conversations_bp.route("/<persona_id>/messages", methods=["POST"])

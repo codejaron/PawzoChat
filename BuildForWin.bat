@@ -52,7 +52,7 @@ if errorlevel 1 (
 exit /b 0
 
 :check_main_build_env
-"%PYTHON%" -c "import importlib,sys;mods=['yaml','flask','cheroot','Crypto','qrcode','PIL','openai','anyio','httpx','httpcore','cryptography','mcp','anthropic','google.genai'];ns={'importlib':importlib,'mods':mods,'bad':[]};exec('for m in mods:\n    try:\n        importlib.import_module(m)\n    except Exception as e:\n        bad.append(f\"{m}: {e}\")',ns);bad=ns['bad'];print('Main app build environment is incomplete or broken.') if bad else None;print() if bad else None;print('Dependency check failed:') if bad else None;[print('  - '+item) for item in bad];sys.exit(1 if bad else 0)"
+"%PYTHON%" -c "import importlib,sys;mods=['yaml','flask','cheroot','Crypto','qrcode','PIL','openai','anyio','httpx','httpcore','cryptography','mcp','anthropic','google.genai','pywebpush','py_vapid','http_ece'];ns={'importlib':importlib,'mods':mods,'bad':[]};exec('for m in mods:\n    try:\n        importlib.import_module(m)\n    except Exception as e:\n        bad.append(f\"{m}: {e}\")',ns);bad=ns['bad'];print('Main app build environment is incomplete or broken.') if bad else None;print() if bad else None;print('Dependency check failed:') if bad else None;[print('  - '+item) for item in bad];sys.exit(1 if bad else 0)"
 if errorlevel 1 (
     echo.
     echo Suggested fix:

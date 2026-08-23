@@ -71,6 +71,7 @@ import importlib, sys
 mods = [
     "yaml", "flask", "cheroot", "Crypto", "qrcode", "PIL", "openai", "anyio",
     "httpx", "httpcore", "cryptography", "mcp", "anthropic", "google.genai",
+    "pywebpush", "py_vapid", "http_ece",
 ]
 bad = []
 for m in mods:

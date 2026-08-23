@@ -45,6 +45,7 @@ from pawzochat.services.moments import MomentsService
 from pawzochat.services.proactive import ProactiveService
 from pawzochat.services.reply_dispatcher import ReplyDispatcher
 from pawzochat.services.telemetry import TelemetryService
+from pawzochat.services.web_push import WebPushService
 from pawzochat.services.worldbook import WorldbookService
 from pawzochat.store.conversation import ConversationStore
 from pawzochat.store.moments import MomentsStore
@@ -88,6 +89,7 @@ class App:
         self.proactive_service: ProactiveService | None = None
         self.moments_service: MomentsService | None = None
         self.telemetry: TelemetryService | None = None
+        self.web_push_service: WebPushService | None = None
 
         self.accounts: list[Account] = []
         # Guards the in-memory roster against concurrent web-worker mutations
@@ -212,6 +214,11 @@ class App:
 
         self.emoji_service = EmojiService(self.config, self.llm_manager)
         self.moments_service = MomentsService(self)
+        self.web_push_service = WebPushService(
+            self.config,
+            self.conversation_store,
+        )
+        self.web_push_service.start()
         self.reply_dispatcher = ReplyDispatcher(self)
         self.message_queue = MessageQueue(self)
         self.channel_registry.register(WebChannel(self))
@@ -281,6 +288,8 @@ class App:
             self.moments_service.stop()
         if self.message_queue:
             self.message_queue.stop()
+        if self.web_push_service:
+            self.web_push_service.stop()
         self.extension_manager.stop()
         self.mcp_manager.stop()
 
@@ -300,7 +309,12 @@ class App:
 
         flask_app = create_app(self)
 
-        local_server = WSGIServer(("127.0.0.1", port), flask_app)
+        # SSE uses one WSGI worker per connected browser. Keep the pool larger
+        # than MAX_SSE_CLIENTS so page/API requests cannot be starved even when
+        # every allowed event stream is active.
+        local_server = WSGIServer(
+            ("127.0.0.1", port), flask_app, numthreads=30,
+        )
         self._web_servers.append(local_server)
         threading.Thread(
             target=local_server.safe_start,
@@ -327,13 +341,21 @@ class App:
                 from cheroot.ssl.builtin import BuiltinSSLAdapter
                 from pawzochat.utils.certs import ensure_self_signed_cert
 
-                ensure_listen_port_free(public_port, "0.0.0.0", label="公网面板")
+                reverse_proxy = bool(
+                    self.config.get(
+                        "web", "reverse_proxy_enabled", default=False,
+                    )
+                )
+                bind_host = "127.0.0.1" if reverse_proxy else "0.0.0.0"
+                ensure_listen_port_free(public_port, bind_host, label="公网面板")
 
                 cert_path, key_path = ensure_self_signed_cert(CERTS_DIR)
                 public_mw = SecretPrefixMiddleware(flask_app.wsgi_app, secret)
                 flask_app.config["PUBLIC_MIDDLEWARE"] = public_mw
 
-                public_server = WSGIServer(("0.0.0.0", public_port), public_mw)
+                public_server = WSGIServer(
+                    (bind_host, public_port), public_mw, numthreads=30,
+                )
                 public_server.ssl_adapter = BuiltinSSLAdapter(
                     str(cert_path), str(key_path),
                 )
@@ -356,8 +378,19 @@ class App:
                     daemon=True,
                 ).start()
                 logger.info(
-                    "公网面板已启动 (HTTPS): 0.0.0.0:%s/%s", public_port, secret,
+                    "公网面板已启动 (HTTPS): %s:%s/%s%s",
+                    bind_host,
+                    public_port,
+                    secret,
+                    "（仅供反向代理访问）" if reverse_proxy else "",
                 )
+                public_base_url = str(
+                    self.config.get("web", "public_base_url", default="") or ""
+                ).rstrip("/")
+                if reverse_proxy and public_base_url:
+                    logger.info(
+                        "公网访问地址: %s/%s", public_base_url, secret,
+                    )
 
     def _print_access_info(self):
         """Print access URLs to the console after startup."""
@@ -365,15 +398,34 @@ class App:
         public_enabled = self.config.get("web", "public_enabled", default=False)
         public_port = int(self.config.get("web", "public_port", default=0))
         secret = self.config.get("web", "public_secret", default="")
+        reverse_proxy = bool(
+            self.config.get("web", "reverse_proxy_enabled", default=False)
+        )
+        public_base_url = str(
+            self.config.get("web", "public_base_url", default="") or ""
+        ).rstrip("/")
 
         logger.info("=" * 40)
         logger.info("  访问信息")
         logger.info("=" * 40)
         logger.info("  本地地址: http://127.0.0.1:%s", port)
         if public_enabled and public_port and secret:
-            logger.info(
-                "  公网地址: https://你的公网IP:%s/%s", public_port, secret,
-            )
+            if reverse_proxy:
+                logger.info(
+                    "  反向代理源站: https://127.0.0.1:%s/%s",
+                    public_port,
+                    secret,
+                )
+                if public_base_url:
+                    logger.info(
+                        "  公网地址: %s/%s", public_base_url, secret,
+                    )
+                else:
+                    logger.warning("  公网 HTTPS 地址尚未配置")
+            else:
+                logger.info(
+                    "  公网地址: https://你的公网IP:%s/%s", public_port, secret,
+                )
         logger.info("=" * 40)
 
     # ---- Update ----

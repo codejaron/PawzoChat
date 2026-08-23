@@ -49,7 +49,13 @@ _MIME_MAP = {
     ".ico": "image/x-icon",
 }
 
-_AUTH_EXEMPT = frozenset(["/login", "/static/style.css", "/static/logo.png"])
+_AUTH_EXEMPT = frozenset([
+    "/login",
+    "/manifest.webmanifest",
+    "/service-worker.js",
+    "/static/style.css",
+    "/static/logo.png",
+])
 _STATEFUL_METHODS = frozenset(["POST", "PUT", "PATCH", "DELETE"])
 
 
@@ -252,6 +258,32 @@ def create_app(app_instance: App) -> Flask:
             resp.headers["Cache-Control"] = "no-cache"
         return resp
 
+    @flask_app.route("/service-worker.js")
+    def serve_service_worker():
+        resp = send_from_directory(
+            _STATIC_DIR,
+            "service-worker.js",
+            conditional=True,
+            etag=True,
+            max_age=0,
+        )
+        resp.headers["Content-Type"] = "application/javascript; charset=utf-8"
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+        resp.headers["Service-Worker-Allowed"] = (request.script_root or "") + "/"
+        return resp
+
+    @flask_app.route("/manifest.webmanifest")
+    def serve_web_manifest():
+        resp = send_from_directory(
+            _STATIC_DIR,
+            "manifest.webmanifest",
+            conditional=True,
+            etag=True,
+            max_age=300,
+        )
+        resp.headers["Content-Type"] = "application/manifest+json; charset=utf-8"
+        return resp
+
     # ---- Blueprints ----
 
     from pawzochat.web.routes.api_conversations import api_conversations_bp
@@ -265,6 +297,7 @@ def create_app(app_instance: App) -> Flask:
     from pawzochat.web.routes.api_emoji import api_emoji_bp
     from pawzochat.web.routes.api_mcp import api_mcp_bp
     from pawzochat.web.routes.api_moments import api_moments_bp
+    from pawzochat.web.routes.api_notifications import api_notifications_bp
     from pawzochat.web.routes.api_plugins import api_plugins_bp
     from pawzochat.web.routes.api_setup import api_setup_bp
     from pawzochat.web.routes.api_telemetry import api_telemetry_bp
@@ -283,6 +316,7 @@ def create_app(app_instance: App) -> Flask:
     flask_app.register_blueprint(api_emoji_bp, url_prefix="/api/emoji")
     flask_app.register_blueprint(api_mcp_bp, url_prefix="/api/mcp")
     flask_app.register_blueprint(api_moments_bp, url_prefix="/api/moments")
+    flask_app.register_blueprint(api_notifications_bp, url_prefix="/api/notifications")
     flask_app.register_blueprint(api_plugins_bp, url_prefix="/api/plugins")
     flask_app.register_blueprint(api_setup_bp, url_prefix="/api/setup")
     flask_app.register_blueprint(api_telemetry_bp, url_prefix="/api/telemetry")
@@ -415,7 +449,10 @@ def create_app(app_instance: App) -> Flask:
 
     @flask_app.route("/api/events")
     def events():
-        return Response(sse_stream(), mimetype="text/event-stream")
+        response = Response(sse_stream(), mimetype="text/event-stream")
+        response.headers["Cache-Control"] = "no-cache, no-transform"
+        response.headers["X-Accel-Buffering"] = "no"
+        return response
 
     # ---- Update API ----
 

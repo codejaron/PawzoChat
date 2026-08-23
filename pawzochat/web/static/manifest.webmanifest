@@ -1,0 +1,19 @@
+{
+  "name": "PawzoChat",
+  "short_name": "PawzoChat",
+  "description": "PawzoChat 聊天面板",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#6f91c7",
+  "icons": [
+    {
+      "src": "static/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
