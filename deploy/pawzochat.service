@@ -1,0 +1,33 @@
+[Unit]
+Description=PawzoChat
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pawzochat
+Group=pawzochat
+WorkingDirectory=/opt/pawzochat/app
+ExecStart=/opt/pawzochat/venv/bin/python /opt/pawzochat/app/main.py
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=20s
+Environment=PYTHONUNBUFFERED=1
+UMask=0077
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
