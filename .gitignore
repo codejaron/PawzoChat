@@ -17,7 +17,8 @@ data/plugins/*/cache/**
 data/plugins/*/logs/
 data/plugins/*/logs/**
 key/
-tests/
+tests/*
+!tests/test_server_mode.py
 test/
 scripts/
 *.b64

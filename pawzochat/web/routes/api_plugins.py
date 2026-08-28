@@ -14,10 +14,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""REST API for plugin discovery and management.
-
-All endpoints are local-only — public access returns 403.
-"""
+"""REST API for plugin discovery and authenticated administration."""
 
 from __future__ import annotations
 
@@ -25,6 +22,7 @@ import mimetypes
 
 from flask import Blueprint, jsonify, request, send_from_directory
 
+from pawzochat.web.access import is_legacy_public_access
 from pawzochat.web.routes import get_app
 
 api_plugins_bp = Blueprint("api_plugins", __name__)
@@ -32,7 +30,7 @@ api_plugins_bp = Blueprint("api_plugins", __name__)
 
 @api_plugins_bp.before_request
 def _require_local():
-    if request.environ.get("pawzochat.is_public", False):
+    if is_legacy_public_access():
         return jsonify({"error": "插件管理仅限本地访问"}), 403
 
 
@@ -109,7 +107,8 @@ def update_plugin_config(plugin_id: str):
 def plugin_ui_asset(plugin_id: str, filename: str):
     """Serve a plugin's custom config UI assets from ``<plugin_root>/ui/``.
 
-    Local-only (gated by the blueprint-level ``_require_local`` hook).
+    Available to desktop-local and authenticated server administrators; the
+    legacy desktop-public endpoint remains blocked by ``_require_local``.
     Refuses to serve unless the plugin's manifest explicitly declares
     ``config_ui``. The plugin's actual root directory is looked up via
     ``ExtensionManager`` rather than derived from the URL — manifest ``id``
@@ -145,8 +144,9 @@ def plugin_ui_asset(plugin_id: str, filename: str):
     resp.headers["Pragma"] = "no-cache"
     resp.headers["Expires"] = "0"
     # Override the global X-Frame-Options: DENY so the management UI can embed
-    # this asset in a same-origin sandboxed iframe. Route is local-only.
+    # this asset in a same-origin sandboxed iframe.
     resp.headers["X-Frame-Options"] = "SAMEORIGIN"
+    resp.headers["Content-Security-Policy"] = "frame-ancestors 'self'"
     if not resp.headers.get("Content-Type"):
         guessed, _ = mimetypes.guess_type(filename)
         if guessed:

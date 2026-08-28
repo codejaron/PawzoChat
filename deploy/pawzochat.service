@@ -8,12 +8,14 @@ Type=simple
 User=pawzochat
 Group=pawzochat
 WorkingDirectory=/opt/pawzochat/app
-ExecStart=/opt/pawzochat/venv/bin/python /opt/pawzochat/app/main.py
+ExecStart=/opt/pawzochat/venv/bin/pawzochat server run
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=20s
 Environment=PYTHONUNBUFFERED=1
-EnvironmentFile=-/etc/pawzochat/pawzochat.env
+EnvironmentFile=/etc/pawzochat/server.env
+StateDirectory=pawzochat
+StateDirectoryMode=0700
 UMask=0077
 
 NoNewPrivileges=true

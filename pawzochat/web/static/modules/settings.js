@@ -77,6 +77,7 @@ async function renderSettings() {
   } catch (e) { /* silent */ }
 
   const isPublic = !!state.settings?.is_public;
+  const isServer = state.settings?.deployment_mode === "server";
 
   const profile = state.profile || { name: "我", has_avatar: false };
   const base = window.PAWZOCHAT_BASE || "";
@@ -144,7 +145,7 @@ async function renderSettings() {
     <div class="card">
       ${!isPublic ? `<div class="card-row" onclick="PawzoChat.pushPage('settingsNetwork')">
         <div class="row-icon cyan">${iconHtml("ri-global-line")}</div>
-        <span class="row-label">网络设置</span><span class="row-arrow">›</span>
+        <span class="row-label">${isServer ? "服务器部署" : "网络设置"}</span><span class="row-arrow">›</span>
       </div>` : ''}
       <div class="card-row" onclick="PawzoChat.pushPage('settingsAbout')">
         <div class="row-icon neutral">${iconHtml("ri-information-line")}</div>
@@ -2643,6 +2644,34 @@ export async function emojiDeleteEmotion(group, name) {
 /* ============ Network Settings ============ */
 
 function renderSettingsNetwork() {
+  if (state.settings?.deployment_mode === "server") {
+    setTopBar("服务器部署", true, "");
+    const server = state.settings?.server || {};
+    const source = `${server.bind_host || "127.0.0.1"}:${server.port || "62000"}`;
+    const publicUrl = server.public_url || "未配置";
+    content().innerHTML = `<div class="page">
+      <div class="card">
+        <div class="card-header">当前运行方式</div>
+        <div class="form-group"><div class="form-row">
+          <label>模式</label><span class="row-value">无 GUI 服务器模式</span>
+        </div></div>
+        <div class="form-group"><div class="form-row">
+          <label>内部监听</label><span class="row-value" style="user-select:text">${esc(source)}</span>
+        </div></div>
+        <div class="form-group"><div class="form-row">
+          <label>公网 HTTPS</label><span class="row-value" style="user-select:text;word-break:break-all">${esc(publicUrl)}</span>
+        </div></div>
+      </div>
+      <div class="card" style="margin-top:12px">
+        <div class="card-header">管理方式</div>
+        <div style="padding:4px 16px 14px;color:var(--text-2);font-size:13px;line-height:1.7">
+          监听地址、端口、域名和时区由服务器上的 <code>/etc/pawzochat/server.env</code> 管理，修改后重启 PawzoChat。<br>
+          管理员密码使用 <code>pawzochat server passwd</code> 修改。应用不会在网页中改写服务器部署配置。
+        </div>
+      </div>
+    </div>`;
+    return;
+  }
   if (state.settings?.is_public) {
     setTopBar("网络设置", true, "");
     content().innerHTML = `<div class="page"><div class="card" style="margin:16px"><div style="padding:20px;text-align:center;color:var(--text-3);font-size:14px">网络设置仅支持从本地访问管理</div></div></div>`;

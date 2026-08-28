@@ -133,13 +133,25 @@ def _kill_pid(pid: int) -> bool:
         return False
 
 
-def ensure_listen_port_free(port: int, host: str = "127.0.0.1", *, label: str = "") -> None:
+def ensure_listen_port_free(
+    port: int,
+    host: str = "127.0.0.1",
+    *,
+    label: str = "",
+    terminate_existing: bool = True,
+) -> None:
     """
-    If *port* is not bindable on *host*, try to terminate other processes listening on *port*,
-    then verify bind succeeds. Raises OSError if the port remains unavailable.
+    Verify that *port* is bindable on *host*.
+
+    Desktop mode may opt into the historical single-instance behavior that
+    terminates a stale listener. Server mode passes ``terminate_existing=False``
+    because a daemon must never kill an unrelated process to claim a port.
     """
     if _can_bind(host, port):
         return
+
+    if not terminate_existing:
+        raise OSError(f"{label or 'listen'} port is already in use: {host}:{port}")
 
     pids = _pids_listening_on_port(port) - {os.getpid()}
     if not pids:

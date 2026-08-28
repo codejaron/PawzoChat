@@ -1,10 +1,17 @@
-# 本地面板 / 公网面板访问与安全模型
+# Web 访问与安全模型
 
-> 术语约定：本文使用“本地面板”表示仅绑定 `127.0.0.1` 的 HTTP 服务；“公网面板”表示带随机路径和密码认证的独立 HTTPS 服务。公网面板可直接绑定 `0.0.0.0`，也可在“可信 HTTPS 反向代理”模式下仅绑定 `127.0.0.1`。
+PawzoChat 有两种运行模式：
 
-## 双服务实例
+| 模式 | 监听与入口 | 认证 |
+| --- | --- | --- |
+| 桌面模式 | 本地 `127.0.0.1` HTTP；可选旧版随机路径公网 HTTPS | 本地入口免登录；旧版公网入口需要密码 |
+| 服务器模式 | 单一固定 HTTP 端口，默认 `127.0.0.1:62000`，由同机反向代理提供可信 HTTPS | 除健康检查和登录资源外全部需要管理员认证 |
 
-PawzoChat 启动时最多创建两个 Cheroot WSGI Server，二者共享同一个 Flask 应用和运行时数据：
+服务器模式的完整安装边界见[无 GUI Linux 服务器部署](server-deployment.md)。下文“双服务实例”和“随机路径”只描述桌面模式的兼容功能。
+
+## 桌面模式的双服务实例
+
+桌面模式最多创建两个 Cheroot WSGI Server，二者共享同一个 Flask 应用和运行时数据：
 
 | | 本地面板 | 公网面板 |
 | --- | --- | --- |
@@ -31,7 +38,7 @@ PawzoChat 启动时最多创建两个 Cheroot WSGI Server，二者共享同一�
 
 1. 请求路径必须等于 `/<public_secret>` 或以 `/<public_secret>/` 开头，否则返回 404。
 2. 中间件剥离前缀，并设置 `SCRIPT_NAME=/<public_secret>`。
-3. 在 WSGI environ 中设置 `pawzochat.is_public=True`，供认证、中间件和路由判断来源。
+3. 在 WSGI environ 中标记访问策略为 `desktop_public`，供认证和管理路由判断来源。
 
 Flask 内部仍只定义 `/api/settings` 等普通路由。模板使用 `request.script_root`，前端使用 `window.PAWZOCHAT_BASE` 自动补前缀：
 
@@ -40,29 +47,30 @@ const base = window.PAWZOCHAT_BASE || "";
 fetch(`${base}/api/settings`);
 ```
 
-后端不得通过客户端 IP 或端口猜测来源，应统一读取：
+后端不得通过客户端 IP 或端口猜测来源，应统一使用 `pawzochat.web.access`：
 
 ```python
-is_public = request.environ.get("pawzochat.is_public", False)
+from pawzochat.web.access import is_legacy_public_access
+
+is_public = is_legacy_public_access()
 ```
 
 ## 登录与会话
 
-公网请求的认证流程：
+旧版桌面公网入口和服务器入口共用以下认证流程：
 
 ```text
 请求进入
-  ├─ 公网端点已锁定 → 403（此时不再检查路径前缀）
-  ├─ 路径前缀不匹配 → 404
+  ├─ 桌面公网路径前缀不匹配 → 404
   ├─ /login、/static/style.css、/static/logo.png → 免登录
   ├─ session.authenticated=true → 放行
   ├─ /api/* → 401 JSON
   └─ 其他页面 → 重定向 /login
 ```
 
-登录页使用随机 CSRF Token。登录成功后的 Session 有效期为 24 小时；应用重启会更换 Flask Session 密钥，因此现有 Session 同时失效。Cookie 名为 `pawzochat_session`，并设置 `HttpOnly`、`SameSite=Lax`；启用公网模式时还设置 `Secure`。
+登录页使用随机 CSRF Token。登录成功后的 Session 有效期为 24 小时。桌面模式每次启动生成临时 Session 密钥；服务器模式把 Session 密钥保存在数据目录的 `auth/session.key`，正常重启不会让所有设备掉登录。Cookie 名为 `pawzochat_session`，设置 `HttpOnly`、`SameSite=Lax`，远程入口还设置 `Secure`。
 
-修改密码不会主动撤销已经认证的 Session；需要立即使所有既有登录失效时，应重启应用。
+服务器通过 `pawzochat server passwd` 修改密码时会同时轮换 Session 密钥，使所有既有登录立即失效。桌面模式沿用当前会话行为。
 
 本地请求不检查面板密码。这是密码恢复与本机维护入口，也意味着能在本机访问 PawzoChat 进程的用户拥有完整面板权限。
 
@@ -81,11 +89,11 @@ $pbkdf2-sha256$600000$<salt_hex>$<hash_hex>
 
 启动时会把旧版明文密码自动迁移为上述哈希格式。
 
-公网连续 5 次密码错误后，`SecretPrefixMiddleware` 会锁定整个公网端点，后续请求统一返回 403。一次成功登录会把失败计数清零；锁定后只能重启程序解锁。该计数是整个公网实例共享的，不是按 IP 分组的限流器。
+登录失败按客户端 IP 独立统计：15 分钟内连续 5 次错误后，该客户端在窗口结束前收到 429；其他客户端不受影响。一次成功登录会清除该客户端的失败记录。服务器模式只在监听本机且配置可信反向代理层数时接受 `X-Forwarded-For`，避免客户端直接伪造限流身份。
 
 ## 公网写请求防护
 
-除登录表单外，公网的 `POST`、`PUT`、`PATCH`、`DELETE` 请求必须满足同源检查：
+除登录表单外，所有需要认证的远程 `POST`、`PUT`、`PATCH`、`DELETE` 请求必须满足同源检查：
 
 - `Origin` 等于当前请求 Origin；或
 - `Referer` 的 Origin 等于当前请求 Origin。
@@ -97,13 +105,14 @@ $pbkdf2-sha256$600000$<salt_hex>$<hash_hex>
 - `X-Frame-Options: DENY`
 - `X-Content-Type-Options: nosniff`
 - `Referrer-Policy: same-origin`
-- 公网响应额外带 `Content-Security-Policy: frame-ancestors 'none'`
+- 远程响应额外带 `Content-Security-Policy: frame-ancestors 'none'`
+- 服务器模式经代理确认 HTTPS 后还发送 HSTS
 
 本地插件配置 iframe 的静态资源路由会单独把 `X-Frame-Options` 改为 `SAMEORIGIN`，以允许宿主页面嵌入沙箱 iframe。
 
-## 公网功能限制
+## 管理功能边界
 
-即使已登录，公网请求仍有以下硬限制：
+桌面模式的旧版公网入口即使已登录，仍有以下硬限制：
 
 - `GET /api/settings` 不返回 `web` 段，不暴露端口、路径和密码状态。
 - `PATCH /api/settings` 禁止修改 `web` 段。
@@ -114,9 +123,13 @@ $pbkdf2-sha256$600000$<salt_hex>$<hash_hex>
 
 其他已认证 API 仍可能修改角色、会话、服务商等数据；公网密码泄露应按完整面板权限泄露处理。
 
+服务器模式的网页是唯一管理入口，因此已认证管理员可以管理 MCP 和插件；监听地址、端口、外部域名、代理层数和时区只能通过 `/etc/pawzochat/server.env` 修改，内置网页更新接口在服务器模式下返回 404。启用第三方插件等同于允许其在 PawzoChat 服务用户权限下执行代码。
+
 ## 证书、凭据与部署边界
 
-公网证书首次启用时写入：
+服务器模式不生成或读取应用内 TLS 证书。PawzoChat 只提供固定 HTTP 源站，公共 CA 证书必须在 Nginx 或其他同机入口层终止。
+
+桌面模式的旧版公网证书首次启用时写入：
 
 ```text
 data/certs/server.crt
@@ -127,7 +140,9 @@ data/certs/server.key
 
 ## 受信任 HTTPS 与浏览器通知
 
-浏览器通知依赖 Web Push。手机浏览器不会把“手动忽略自签名证书警告”视为可信安全上下文，因此直接访问 PawzoChat 的自签名公网地址不能启用通知。可通过 Cloudflare Tunnel 为 PawzoChat 提供稳定且受浏览器信任的 HTTPS 地址。
+浏览器通知依赖 Web Push。手机浏览器不会把“手动忽略自签名证书警告”视为可信安全上下文，因此直接访问桌面模式的自签名公网地址不能启用通知。
+
+部署在公网服务器时应使用[服务器部署模式](server-deployment.md)，由域名和公共 CA 证书提供稳定可信 Origin，不需要 Cloudflare Tunnel。以下 Cloudflare Tunnel 步骤只适用于没有公网 IP、需要从家庭电脑远程访问桌面模式的用户。
 
 ### 使用 Cloudflare Tunnel
 
@@ -163,7 +178,7 @@ data/certs/server.key
 - 公网路径未通过截图、日志或浏览器分享泄露。
 - 直接模式只开放实际使用的 `public_port`；反向代理模式不要把该端口对外放行。
 - 能接受自签名证书的信任提示，或在外部终止可信 TLS。
-- 了解当前只有“连续 5 次失败后全局锁定”，没有按 IP、时间窗口或分布式限流。
+- 了解登录限流保存在单进程内存中；PawzoChat 不支持多副本共享状态。
 
 ## 密码恢复
 
@@ -174,6 +189,16 @@ http://127.0.0.1:<web.port>
 ```
 
 进入“设置 → 网络设置”重设密码。本地面板免登录，无需直接编辑配置文件；保存后重启应用。
+
+服务器模式没有免登录入口。使用服务用户执行：
+
+```bash
+systemctl stop pawzochat
+pawzochat server passwd
+systemctl start pawzochat
+```
+
+命令会安全更新密码哈希并撤销现有 Session，不需要修改 YAML。
 
 ## 配置
 
@@ -190,8 +215,11 @@ web:
 
 相关实现：
 
-- `pawzochat/app.py`：双 Server 启动与明文密码迁移
-- `pawzochat/web/app.py`：路径前缀、认证、同源检查和安全响应头
+- `pawzochat/app.py`：桌面双 Server 与服务器单 Server 生命周期
+- `pawzochat/runtime.py`：服务器部署参数校验
+- `pawzochat/server_cli.py`：初始化、运行、密码与诊断命令
+- `pawzochat/web/access.py`：请求访问策略
+- `pawzochat/web/app.py`：路径前缀、认证、登录限流、同源检查和安全响应头
 - `pawzochat/web/routes/api_settings.py`：密码规则与公网设置限制
 - `pawzochat/utils/crypto.py`：密码哈希与校验
 - `pawzochat/utils/certs.py`：自签名证书生成

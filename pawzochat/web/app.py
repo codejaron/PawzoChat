@@ -29,8 +29,16 @@ from urllib.parse import urlsplit
 from flask import Flask, Response, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 from PIL import Image
 
-from pawzochat.paths import CHATS_DIR, EMOJI_DIR, PROFILE_DIR
+from pawzochat.paths import CHATS_DIR, EMOJI_DIR, PROFILE_DIR, SESSION_KEY_PATH
 from pawzochat.utils.crypto import verify_password
+from pawzochat.web.access import (
+    is_authenticated_access,
+    is_legacy_public_access,
+    is_server_admin_access,
+    mark_desktop_public,
+)
+from pawzochat.web.login_limiter import LoginRateLimiter
+from pawzochat.web.session_key import load_or_create_session_key
 
 if TYPE_CHECKING:
     from pawzochat.app import App
@@ -51,6 +59,7 @@ _MIME_MAP = {
 
 _AUTH_EXEMPT = frozenset([
     "/login",
+    "/healthz",
     "/manifest.webmanifest",
     "/service-worker.js",
     "/static/style.css",
@@ -74,41 +83,20 @@ class SecretPrefixMiddleware:
     Strips the prefix and sets SCRIPT_NAME so Flask generates correct URLs.
     Returns 404 for requests that don't match the prefix.
 
-    After ``max_failures`` consecutive wrong-password logins the entire
-    public endpoint is locked (403).  The lock resets on application restart.
+    Authentication and login throttling are handled by the Flask application;
+    this middleware owns only the legacy desktop-public path prefix.
     """
 
-    def __init__(self, wsgi_app, secret: str, *, max_failures: int = 5):
+    def __init__(self, wsgi_app, secret: str):
         self.wsgi_app = wsgi_app
         self.prefix = f"/{secret}"
-        self.locked = False
-        self.fail_count = 0
-        self.max_failures = max_failures
-
-    def record_login_failure(self):
-        self.fail_count += 1
-        if self.fail_count >= self.max_failures:
-            self.locked = True
-            logger.warning(
-                "公网访问已锁定：连续 %d 次密码错误，需重启程序解锁",
-                self.fail_count,
-            )
-
-    def record_login_success(self):
-        self.fail_count = 0
 
     def __call__(self, environ, start_response):
-        if self.locked:
-            start_response(
-                "403 Forbidden",
-                [("Content-Type", "text/plain; charset=utf-8")],
-            )
-            return [b"Public access locked. Restart the application to unlock."]
         path = environ.get("PATH_INFO", "/")
         if path == self.prefix or path.startswith(self.prefix + "/"):
             environ["SCRIPT_NAME"] = self.prefix
             environ["PATH_INFO"] = path[len(self.prefix) :] or "/"
-            environ["pawzochat.is_public"] = True
+            mark_desktop_public(environ)
             return self.wsgi_app(environ, start_response)
         start_response("404 Not Found", [("Content-Type", "text/plain; charset=utf-8")])
         return [b"Not Found"]
@@ -120,7 +108,11 @@ def create_app(app_instance: App) -> Flask:
         template_folder="templates",
         static_folder=None,
     )
-    flask_app.secret_key = os.urandom(32)
+    flask_app.secret_key = (
+        load_or_create_session_key(SESSION_KEY_PATH)
+        if app_instance.runtime.is_server
+        else os.urandom(32)
+    )
     flask_app.config["PAWZOCHAT_APP"] = app_instance
     # Re-read templates from disk when they change — a long-running panel must
     # not keep serving a stale compiled page after the files under it were
@@ -132,19 +124,20 @@ def create_app(app_instance: App) -> Flask:
     flask_app.config["SESSION_COOKIE_HTTPONLY"] = True
     flask_app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     flask_app.config["SESSION_COOKIE_SECURE"] = bool(
-        app_instance.config.get("web", "public_enabled", default=False)
+        app_instance.runtime.is_server
+        or app_instance.config.get("web", "public_enabled", default=False)
     )
+    login_limiter = LoginRateLimiter(max_failures=5, window_seconds=900)
 
     # ---- Auth middleware ----
 
     @flask_app.before_request
     def require_login():
+        if not is_authenticated_access():
+            return None
         password = app_instance.config.get("web", "password", default="")
         if not password:
-            return None
-        is_public = request.environ.get("pawzochat.is_public", False)
-        if not is_public:
-            return None
+            return {"error": "administrator password is not configured"}, 503
         if request.path in _AUTH_EXEMPT:
             return None
         if session.get("authenticated"):
@@ -157,7 +150,7 @@ def create_app(app_instance: App) -> Flask:
     def require_same_origin_for_public_writes():
         if request.method not in _STATEFUL_METHODS:
             return None
-        if not request.environ.get("pawzochat.is_public", False):
+        if not is_authenticated_access():
             return None
         if request.path == "/login":
             return None
@@ -179,9 +172,13 @@ def create_app(app_instance: App) -> Flask:
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "same-origin")
-        if request.environ.get("pawzochat.is_public", False):
+        if is_authenticated_access():
             response.headers.setdefault(
                 "Content-Security-Policy", "frame-ancestors 'none'"
+            )
+        if is_server_admin_access() and request.is_secure:
+            response.headers.setdefault(
+                "Strict-Transport-Security", "max-age=31536000"
             )
         return response
 
@@ -190,8 +187,7 @@ def create_app(app_instance: App) -> Flask:
     @flask_app.route("/login", methods=["GET", "POST"])
     def login():
         password = app_instance.config.get("web", "password", default="")
-        is_public = request.environ.get("pawzochat.is_public", False)
-        if not password or not is_public:
+        if not password or not is_authenticated_access():
             return redirect(url_for("index"))
 
         if request.method == "GET":
@@ -210,21 +206,35 @@ def create_app(app_instance: App) -> Flask:
             session["csrf_token"] = new_csrf
             return render_template("login.html", error="请求无效，请刷新页面重试", csrf_token=new_csrf)
 
+        client_key = request.remote_addr or "unknown"
+        retry_after = login_limiter.retry_after(client_key)
+        if retry_after:
+            response = render_template(
+                "login.html",
+                error=f"尝试次数过多，请 {max(1, (retry_after + 59) // 60)} 分钟后再试",
+                csrf_token=expected_csrf,
+            )
+            return response, 429, {"Retry-After": str(retry_after)}
+
         submitted = request.form.get("password", "")
-        mw: SecretPrefixMiddleware | None = flask_app.config.get("PUBLIC_MIDDLEWARE")
 
         if verify_password(submitted, password):
             session.permanent = True
             session.pop("csrf_token", None)
             session["authenticated"] = True
-            if mw:
-                mw.record_login_success()
+            login_limiter.record_success(client_key)
             return redirect(url_for("index"))
 
-        if mw:
-            mw.record_login_failure()
+        retry_after = login_limiter.record_failure(client_key)
         new_csrf = secrets.token_hex(32)
         session["csrf_token"] = new_csrf
+        if retry_after:
+            response = render_template(
+                "login.html",
+                error=f"尝试次数过多，请 {max(1, (retry_after + 59) // 60)} 分钟后再试",
+                csrf_token=new_csrf,
+            )
+            return response, 429, {"Retry-After": str(retry_after)}
         return render_template("login.html", error="密码错误", csrf_token=new_csrf)
 
     @flask_app.route("/logout")
@@ -246,7 +256,7 @@ def create_app(app_instance: App) -> Flask:
         ext = os.path.splitext(filename)[1].lower()
         if ext in _MIME_MAP:
             resp.headers["Content-Type"] = _MIME_MAP[ext]
-        if request.environ.get("pawzochat.is_public", False):
+        if is_authenticated_access():
             # Public HTTPS link: serve straight from local cache for 5 minutes,
             # then revalidate via ETag/Last-Modified — avoids re-shipping
             # JS/CSS/SVG on every page switch over the WAN.
@@ -479,8 +489,7 @@ def create_app(app_instance: App) -> Flask:
 
     @flask_app.route("/api/update/check")
     def update_check():
-        is_public = request.environ.get("pawzochat.is_public", False)
-        if is_public:
+        if app_instance.runtime.is_server or is_legacy_public_access():
             return {"error": "not found"}, 404
 
         updater = app_instance.updater
@@ -510,8 +519,7 @@ def create_app(app_instance: App) -> Flask:
 
     @flask_app.route("/api/update/state")
     def update_state():
-        is_public = request.environ.get("pawzochat.is_public", False)
-        if is_public:
+        if app_instance.runtime.is_server or is_legacy_public_access():
             return {"error": "not found"}, 404
 
         updater = app_instance.updater
@@ -527,8 +535,7 @@ def create_app(app_instance: App) -> Flask:
 
     @flask_app.route("/api/update/download", methods=["POST"])
     def update_download():
-        is_public = request.environ.get("pawzochat.is_public", False)
-        if is_public:
+        if app_instance.runtime.is_server or is_legacy_public_access():
             return {"error": "not found"}, 404
 
         updater = app_instance.updater
@@ -602,8 +609,7 @@ def create_app(app_instance: App) -> Flask:
 
     @flask_app.route("/api/update/apply", methods=["POST"])
     def update_apply():
-        is_public = request.environ.get("pawzochat.is_public", False)
-        if is_public:
+        if app_instance.runtime.is_server or is_legacy_public_access():
             return {"error": "not found"}, 404
 
         updater = app_instance.updater
@@ -620,6 +626,13 @@ def create_app(app_instance: App) -> Flask:
             logger.exception("应用更新失败")
             return {"error": str(exc)}, 500
 
+    @flask_app.route("/healthz")
+    def healthz():
+        return {
+            "status": "ok",
+            "mode": app_instance.runtime.mode.value,
+        }
+
     @flask_app.route("/api/status")
     def status():
         from pawzochat import __version__
@@ -634,6 +647,7 @@ def create_app(app_instance: App) -> Flask:
         return {
             "version": __version__,
             "running": True,
+            "deployment_mode": app_instance.runtime.mode.value,
             "accounts_online": online,
             "conversations_active": convs,
         }

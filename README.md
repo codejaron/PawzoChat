@@ -7,7 +7,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-AGPL%20v3-green.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey.svg)]()
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)]()
 [![WeChat](https://img.shields.io/badge/WeChat-iLink-brightgreen.svg)]()
 [![QQ](https://img.shields.io/badge/QQ-Open%20API-blue.svg)]()
 [![LINUX DO](https://img.shields.io/badge/LINUX_DO-Where_Possible_Begins-black.svg)](https://linux.do/)
@@ -34,7 +34,7 @@ PawzoChat 是一个功能强大的 AI 对话平台，基于大语言模型（LLM
 ### 多平台接入
 - **微信** — 基于 iLink 协议（长轮询），扫码登录，支持文本/图片/文件/语音消息收发
 - **QQ** — 基于 QQ 开放平台 API v2（WebSocket 网关），支持私聊文本/图片/文件/语音/引用消息
-- **Web 管理面板** — 内置本地+公网双入口 Web 界面，支持多账号切换、对话预览、人设管理
+- **Web 管理面板** — 桌面本地模式与无 GUI Linux 服务器模式共用完整管理界面，支持多账号切换、对话预览和人设管理
 
 ### 生图/语音
 - **AI 生图** — 角色在聊天中可调用 `generate_image` 工具直接生成图片发送给用户；支持 OpenAI Image、Gemini (NanoBanana)、NovelAI 等多种后端，可按角色设置画风前缀和参考图
@@ -57,7 +57,7 @@ PawzoChat 是一个功能强大的 AI 对话平台，基于大语言模型（LLM
 - **跨设备通知** — 基于标准 Web Push，逐条推送助手回复；支持当前设备开关、前台抑制、隐藏正文、单会话免打扰和失效订阅自动清理
 - **人设管理** — 创建/编辑/导入/导出角色，头像裁剪、参考图上传、Voice/TTS 配置
 - **设置中心** — LLM 服务商与模型管理、语音服务商管理、生图服务商管理、MCP 服务器配置、插件管理、主题换肤
-- **公网安全远程访问** — 支持一键启用独立公网 HTTPS 入口，自动生成自签名证书与随机 URL 路径前缀；PBKDF2 密码认证、暴力破解全局锁定、CSRF 同源检查、安全响应头等多层防护；配置后可从手机浏览器安全远程管理面板，详情参见[网络安全指南](docs/network-security.md)
+- **安全远程访问** — Linux 服务器模式使用固定内网监听、外部可信 HTTPS、PBKDF2 管理员认证、按客户端登录限流、CSRF 同源检查和持久化安全会话；桌面端仍保留旧版可选公网入口。参见[服务器部署指南](docs/server-deployment.md)与[网络安全指南](docs/network-security.md)
 
 ## 界面预览
 
@@ -122,7 +122,7 @@ AI 角色可自主发布图文动态，其他角色和用户均可点赞、评�
 ### 环境要求
 
 - **Python 3.10+**
-- Windows 10+ 或 macOS 11+
+- Windows 10+、macOS 11+，或支持 systemd 的 Linux 服务器
 - （可选）微信账号用于扫码登录
 - （可选）QQ 开放平台 AppID/AppSecret
 
@@ -155,6 +155,18 @@ source .venv/bin/activate        # macOS/Linux
 pip install -r requirements.txt
 python main.py
 ```
+
+### 无 GUI Linux 服务器
+
+服务器模式不需要服务器安装桌面或浏览器。PawzoChat 以单进程 systemd 服务运行，Nginx 在同一台服务器上提供域名和可信 HTTPS，用户从自己的电脑或手机完成网页配置与账号扫码：
+
+```bash
+pawzochat server init
+systemctl enable --now pawzochat
+pawzochat server doctor
+```
+
+服务器模式不会创建自签名证书、随机公网端口或 Cloudflare Tunnel。完整安装、Nginx 配置、升级和备份步骤见[无 GUI 服务器部署指南](docs/server-deployment.md)。
 
 ### 构建可执行文件
 
@@ -190,7 +202,7 @@ PawzoChat/
 │   ├── store/               # 会话/消息/朋友圈数据持久化
 │   ├── web/                 # Flask Web 面板 + Vanilla JS SPA
 │   └── utils/               # 工具函数
-├── data/                    # 运行时数据目录
+├── data/                    # 桌面运行数据 + 服务器初始化所用内置资源
 │   ├── config/config.yaml   # 主配置
 │   ├── auth/                # 登录凭证
 │   ├── chats/               # 对话历史、记忆、图片、文件
@@ -206,6 +218,7 @@ PawzoChat/
     ├── plugin-development-guide.md
     ├── plugins-overview.md
     ├── custom-theme-guide.md
+    ├── server-deployment.md
     └── network-security.md
 ```
 
@@ -228,7 +241,7 @@ PawzoChat/
 
 ## 配置
 
-主配置文件位于 `data/config/config.yaml`，核心配置段：
+桌面模式的主配置位于 `data/config/config.yaml`；服务器模式位于 `PAWZOCHAT_DATA_DIR/config/config.yaml`（官方 systemd 部署默认为 `/var/lib/pawzochat/config/config.yaml`）。核心配置段：
 
 | 配置段 | 说明 |
 |--------|------|
@@ -241,7 +254,7 @@ PawzoChat/
 | `chat` | 对话参数（队列等待、上下文窗口、工具策略） |
 | `reply` | 回复参数（打字延迟、记忆提醒轮数） |
 | `moments` | 朋友圈设置（发布者/评论者/概率/Prompt 模板） |
-| `web` | Web 面板设置（本地端口、公网前缀、HTTPS） |
+| `web` | 桌面 Web 面板设置与管理员密码；服务器监听和域名由 `/etc/pawzochat/server.env` 管理 |
 | `notifications` | 通知隐私设置（设备订阅单独存放在 `data/push/`） |
 
 大部分配置可通过 Web 管理面板的「设置」页面直接修改，无需手动编辑 YAML。

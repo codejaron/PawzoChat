@@ -20,15 +20,15 @@ from __future__ import annotations
 
 import copy
 import random
-import re
 import secrets
 import socket
-from urllib.parse import urlsplit
 
 from flask import Blueprint, jsonify, request
 
 from pawzochat.paths import THEME_DIR
-from pawzochat.utils.crypto import hash_password
+from pawzochat.runtime import normalize_https_origin
+from pawzochat.utils.crypto import hash_password, validate_password
+from pawzochat.web.access import is_legacy_public_access
 from pawzochat.web.routes import get_app
 
 api_settings_bp = Blueprint("api_settings", __name__)
@@ -54,24 +54,12 @@ def _clean_active_themes(names) -> list[str]:
             seen.add(x)
     return out
 
-_PASSWORD_RE = re.compile(r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$")
 _WEB_PATCH_FIELDS = {
     "password",
     "public_enabled",
     "reverse_proxy_enabled",
     "public_base_url",
 }
-
-
-def _validate_password(pw: str) -> str | None:
-    """Return an error string if *pw* doesn't meet complexity rules, else None."""
-    if len(pw) < 8:
-        return "密码长度至少 8 位"
-    if not _PASSWORD_RE.match(pw):
-        return "密码需要同时包含大写字母、小写字母和数字"
-    return None
-
-
 def _generate_port() -> int:
     """Pick a random port in 10000-60000 that is currently available."""
     for _ in range(50):
@@ -86,45 +74,10 @@ def _generate_secret() -> str:
     return secrets.token_urlsafe(12)
 
 
-def _normalize_public_base_url(value: str) -> str | None:
-    """Validate and canonicalize the externally configured HTTPS origin."""
-    value = value.strip()
-    if not value:
-        return ""
-    if len(value) > 2048 or any(ch.isspace() for ch in value):
-        return None
-    try:
-        parsed = urlsplit(value)
-        port = parsed.port
-        hostname = parsed.hostname
-    except ValueError:
-        return None
-    if (
-        parsed.scheme.lower() != "https"
-        or not parsed.netloc
-        or not hostname
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.path not in ("", "/")
-        or parsed.query
-        or parsed.fragment
-    ):
-        return None
-    try:
-        ascii_host = hostname.encode("idna").decode("ascii").lower()
-    except UnicodeError:
-        return None
-    if not ascii_host or len(ascii_host) > 253 or "\\" in ascii_host:
-        return None
-    host = f"[{ascii_host}]" if ":" in ascii_host else ascii_host
-    netloc = f"{host}:{port}" if port is not None else host
-    return f"https://{netloc}"
-
-
 @api_settings_bp.route("", methods=["GET"])
 def get_settings():
     app = get_app()
-    is_public = request.environ.get("pawzochat.is_public", False)
+    is_public = is_legacy_public_access()
     result = {}
     for key in EXPOSED_SECTIONS:
         if key == "web" and is_public:
@@ -134,6 +87,14 @@ def get_settings():
         result["web"]["has_password"] = bool(result["web"].get("password"))
         result["web"].pop("password", None)
     result["is_public"] = is_public
+    result["deployment_mode"] = app.runtime.mode.value
+    if app.runtime.is_server:
+        result["server"] = {
+            "bind_host": app.runtime.bind_host,
+            "port": app.runtime.port,
+            "public_url": app.runtime.public_url,
+            "proxy_hops": app.runtime.proxy_hops,
+        }
     return jsonify(result)
 
 
@@ -143,10 +104,14 @@ def update_settings():
     data = request.get_json(force=True)
     if not isinstance(data, dict):
         return jsonify({"error": "settings patch must be an object"}), 400
-    is_public = request.environ.get("pawzochat.is_public", False)
+    is_public = is_legacy_public_access()
 
     with app.config.lock:
         if "web" in data:
+            if app.runtime.is_server:
+                return jsonify({
+                    "error": "服务器部署参数只能通过 /etc/pawzochat/server.env 和 server passwd 修改",
+                }), 403
             if is_public:
                 return jsonify({"error": "网络设置仅限本地访问修改"}), 403
 
@@ -166,7 +131,7 @@ def update_settings():
                 if not isinstance(pw, str):
                     return jsonify({"error": "password must be a string"}), 400
                 if pw:
-                    err = _validate_password(pw)
+                    err = validate_password(pw)
                     if err:
                         return jsonify({"error": err}), 400
                     web_cfg["password"] = hash_password(pw)
@@ -180,7 +145,10 @@ def update_settings():
                     return jsonify({
                         "error": "public_base_url must be a string",
                     }), 400
-                normalized = _normalize_public_base_url(public_base_url)
+                normalized = (
+                    "" if not public_base_url.strip()
+                    else normalize_https_origin(public_base_url)
+                )
                 if normalized is None:
                     return jsonify({
                         "error": "公网 HTTPS 地址格式应为 https://chat.example.com，不能包含路径、参数或账号信息",
@@ -266,9 +234,11 @@ def update_settings():
 
 @api_settings_bp.route("/regenerate-public", methods=["POST"])
 def regenerate_public():
-    if request.environ.get("pawzochat.is_public", False):
-        return jsonify({"error": "网络设置仅限本地访问修改"}), 403
     app = get_app()
+    if app.runtime.is_server:
+        return jsonify({"error": "服务器模式不使用随机公网端口和路径"}), 403
+    if is_legacy_public_access():
+        return jsonify({"error": "网络设置仅限本地访问修改"}), 403
     with app.config.lock:
         web_cfg = app.config.data.setdefault("web", {})
         old_secret = web_cfg.get("public_secret", "")

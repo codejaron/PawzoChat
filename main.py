@@ -14,27 +14,10 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""PawzoChat entry point."""
+"""PawzoChat source-checkout entry point."""
 
-import sys
-
-
-def main():
-    if "--apply-update" in sys.argv:
-        from pawzochat.updater import apply_update
-        apply_update(sys.argv)
-        return
-
-    from pawzochat.updater import cleanup_staging
-    cleanup_staging()
-
-    from pawzochat.app import App
-    app = App()
-    try:
-        app.start()
-    except KeyboardInterrupt:
-        app.shutdown()
+from pawzochat.cli import main
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -37,6 +37,7 @@ from pawzochat.llm.manager import LLMManager
 from pawzochat.mcp.adapters import CapabilityAdapterRegistry
 from pawzochat.mcp.manager import MCPManager
 from pawzochat.paths import BINDINGS_PATH, CERTS_DIR
+from pawzochat.runtime import RuntimeOptions
 from pawzochat.services.chat import ChatService
 from pawzochat.services.emoji import EmojiService
 from pawzochat.services.memory import MemoryService
@@ -60,7 +61,8 @@ logger = logging.getLogger(__name__)
 class App:
     """Central application object wiring all subsystems together."""
 
-    def __init__(self):
+    def __init__(self, runtime: RuntimeOptions | None = None):
+        self.runtime = runtime or RuntimeOptions.desktop()
         self.config = ConfigManager()
         self.conversation_store = ConversationStore()
         self.moments_store = MomentsStore()
@@ -100,7 +102,7 @@ class App:
         self._web_servers: list = []
         self._shutdown_event = threading.Event()
 
-        if getattr(sys, "frozen", False):
+        if getattr(sys, "frozen", False) and not self.runtime.is_server:
             from pawzochat.updater import UpdateChecker
             self.updater: UpdateChecker | None = UpdateChecker()
         else:
@@ -115,6 +117,14 @@ class App:
         logger.info("=" * 50)
         logger.info("  PawzoChat 启动中…")
         logger.info("=" * 50)
+
+        if self.runtime.is_server:
+            ensure_listen_port_free(
+                self.runtime.port,
+                self.runtime.bind_host,
+                label="服务器面板",
+                terminate_existing=False,
+            )
 
         self.llm_manager.init_from_config(self.config.get("llm_providers", default={}))
         if not self.llm_manager.available_providers:
@@ -134,6 +144,13 @@ class App:
 
         self._migrate_bindings()
         self._migrate_password()
+        if self.runtime.is_server and not self.config.get(
+            "web", "password", default="",
+        ):
+            raise RuntimeError(
+                "服务器模式必须配置管理员密码；请先运行 "
+                "'pawzochat server init'"
+            )
 
         mcp_cfg = self.config.get("mcp_servers", default={})
         if mcp_cfg:
@@ -303,11 +320,48 @@ class App:
         from cheroot.wsgi import Server as WSGIServer
 
         from pawzochat.web.app import SecretPrefixMiddleware, create_app
+        flask_app = create_app(self)
+
+        def _launch(server, *, thread_name: str):
+            self._web_servers.append(server)
+            threading.Thread(
+                target=server.safe_start,
+                name=thread_name,
+                daemon=True,
+            ).start()
+
+        if self.runtime.is_server:
+            from werkzeug.middleware.proxy_fix import ProxyFix
+
+            from pawzochat.web.access import AccessMode, AccessModeMiddleware
+
+            host = self.runtime.bind_host
+            port = self.runtime.port
+            ensure_listen_port_free(
+                port,
+                host,
+                label="服务器面板",
+                terminate_existing=False,
+            )
+            server_wsgi = AccessModeMiddleware(
+                flask_app.wsgi_app, AccessMode.SERVER_ADMIN,
+            )
+            if self.runtime.proxy_hops:
+                hops = self.runtime.proxy_hops
+                server_wsgi = ProxyFix(
+                    server_wsgi,
+                    x_for=hops,
+                    x_proto=hops,
+                    x_host=hops,
+                    x_port=hops,
+                )
+            server = WSGIServer((host, port), server_wsgi, numthreads=30)
+            _launch(server, thread_name="web-server")
+            logger.info("服务器面板已启动: http://%s:%s", host, port)
+            return
 
         port = int(self.config.get("web", "port", default=62000))
         ensure_listen_port_free(port, "127.0.0.1", label="本地面板")
-
-        flask_app = create_app(self)
 
         # SSE uses one WSGI worker per connected browser. Keep the pool larger
         # than MAX_SSE_CLIENTS so page/API requests cannot be starved even when
@@ -315,12 +369,7 @@ class App:
         local_server = WSGIServer(
             ("127.0.0.1", port), flask_app, numthreads=30,
         )
-        self._web_servers.append(local_server)
-        threading.Thread(
-            target=local_server.safe_start,
-            name="web-local",
-            daemon=True,
-        ).start()
+        _launch(local_server, thread_name="web-local")
         url = f"http://127.0.0.1:{port}"
         logger.info("本地面板已启动: %s", url)
 
@@ -351,7 +400,6 @@ class App:
 
                 cert_path, key_path = ensure_self_signed_cert(CERTS_DIR)
                 public_mw = SecretPrefixMiddleware(flask_app.wsgi_app, secret)
-                flask_app.config["PUBLIC_MIDDLEWARE"] = public_mw
 
                 public_server = WSGIServer(
                     (bind_host, public_port), public_mw, numthreads=30,
@@ -371,12 +419,7 @@ class App:
                     _orig_error_log(msg, level, traceback)
 
                 public_server.error_log = _quiet_error_log
-                self._web_servers.append(public_server)
-                threading.Thread(
-                    target=public_server.safe_start,
-                    name="web-public",
-                    daemon=True,
-                ).start()
+                _launch(public_server, thread_name="web-public")
                 logger.info(
                     "公网面板已启动 (HTTPS): %s:%s/%s%s",
                     bind_host,
@@ -394,6 +437,19 @@ class App:
 
     def _print_access_info(self):
         """Print access URLs to the console after startup."""
+        if self.runtime.is_server:
+            logger.info("=" * 40)
+            logger.info("  服务器访问信息")
+            logger.info("=" * 40)
+            logger.info(
+                "  反向代理源站: http://%s:%s",
+                self.runtime.bind_host,
+                self.runtime.port,
+            )
+            logger.info("  公网地址: %s", self.runtime.public_url)
+            logger.info("=" * 40)
+            return
+
         port = int(self.config.get("web", "port", default=62000))
         public_enabled = self.config.get("web", "public_enabled", default=False)
         public_port = int(self.config.get("web", "public_port", default=0))

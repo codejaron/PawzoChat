@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Portable path resolution for the application and its sibling data directory."""
+"""Portable resolution for bundled assets and deployment-owned user data."""
 
 from __future__ import annotations
 
@@ -48,9 +48,20 @@ def _user_data_dir(app_name: str = "PawzoChat") -> Path:
     return base / app_name
 
 
+def _resolve_data_dir(app_home: Path) -> Path:
+    configured = os.environ.get("PAWZOCHAT_DATA_DIR", "").strip()
+    if not configured:
+        return (app_home / "data").resolve()
+    path = Path(configured).expanduser().resolve()
+    if path == Path(path.anchor):
+        raise RuntimeError("PAWZOCHAT_DATA_DIR cannot be a filesystem root")
+    return path
+
+
 APP_HOME = _detect_app_home()
-DATA_DIR = (APP_HOME / "data").resolve()
-USER_DATA_DIR = _user_data_dir()
+BUNDLED_DATA_DIR = (APP_HOME / "data").resolve()
+DATA_DIR = _resolve_data_dir(APP_HOME)
+USER_DATA_DIR = DATA_DIR if os.environ.get("PAWZOCHAT_DATA_DIR") else _user_data_dir()
 
 AUTH_DIR = DATA_DIR / "auth"
 BOOKS_DIR = DATA_DIR / "books"
@@ -77,5 +88,7 @@ CREDENTIALS_PATH = AUTH_DIR / "accounts.json"
 INVITATION_CODE_PATH = INVITATION_DIR / "invitation_code.txt"
 PUSH_SUBSCRIPTIONS_PATH = PUSH_DIR / "subscriptions.json"
 VAPID_PRIVATE_KEY_PATH = PUSH_DIR / "vapid_private_key.pem"
+SESSION_KEY_PATH = AUTH_DIR / "session.key"
+INSTANCE_LOCK_PATH = DATA_DIR / "pawzochat.lock"
 TELEMETRY_ID_FILE = USER_DATA_DIR / "telemetry_id.txt"
 TELEMETRY_ID_FALLBACK = DATA_DIR / "telemetry_id.txt"

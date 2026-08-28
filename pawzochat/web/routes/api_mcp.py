@@ -24,6 +24,7 @@ import re
 
 from flask import Blueprint, jsonify, request
 
+from pawzochat.web.access import is_legacy_public_access
 from pawzochat.web.routes import get_app
 
 logger = logging.getLogger(__name__)
@@ -37,7 +38,7 @@ _NAME_RE = re.compile(
 
 def _require_local():
     """Return an error response if the request comes from public access."""
-    if request.environ.get("pawzochat.is_public", False):
+    if is_legacy_public_access():
         return jsonify({"error": "MCP 配置仅限本地访问修改"}), 403
     return None
 
@@ -106,7 +107,7 @@ def list_servers():
     app = get_app()
     servers_cfg = app.config.get("mcp_servers", default={}) or {}
     runtime = app.mcp_manager.get_server_status()
-    is_public = request.environ.get("pawzochat.is_public", False)
+    is_public = is_legacy_public_access()
 
     servers = [
         _server_summary(name, cfg, runtime.get(name))

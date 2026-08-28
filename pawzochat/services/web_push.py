@@ -58,6 +58,56 @@ def _subscription_id(endpoint: str) -> str:
     return hashlib.sha256(endpoint.encode("utf-8")).hexdigest()
 
 
+def ensure_vapid_identity(
+    private_key_path: str | Path = VAPID_PRIVATE_KEY_PATH,
+) -> str:
+    """Load or atomically create the deployment's VAPID identity."""
+    path = Path(private_key_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        try:
+            private_key = serialization.load_pem_private_key(
+                path.read_bytes(), password=None,
+            )
+        except (OSError, ValueError, TypeError) as exc:
+            raise RuntimeError(f"VAPID 私钥无法读取: {path}") from exc
+        if (
+            not isinstance(private_key, ec.EllipticCurvePrivateKey)
+            or not isinstance(private_key.curve, ec.SECP256R1)
+        ):
+            raise RuntimeError(f"VAPID 私钥类型无效: {path}")
+    else:
+        private_key = ec.generate_private_key(ec.SECP256R1())
+        pem = private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+        fd, tmp_path = tempfile.mkstemp(
+            dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp",
+        )
+        try:
+            if os.name == "posix":
+                os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(pem)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_path, path)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+
+    raw_public = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.X962,
+        format=serialization.PublicFormat.UncompressedPoint,
+    )
+    return base64.urlsafe_b64encode(raw_public).rstrip(b"=").decode("ascii")
+
+
 class WebPushService:
     """Single source of truth for every browser Push subscription.
 
@@ -88,7 +138,7 @@ class WebPushService:
         self._send_pool: ThreadPoolExecutor | None = None
 
         self._load_subscriptions()
-        self._public_key = self._ensure_vapid_key()
+        self._public_key = ensure_vapid_identity(self._private_key_path)
 
     @property
     def public_key(self) -> str:
@@ -499,57 +549,6 @@ class WebPushService:
             except OSError:
                 pass
             raise
-
-    def _ensure_vapid_key(self) -> str:
-        path = self._private_key_path
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if path.exists():
-            try:
-                private_key = serialization.load_pem_private_key(
-                    path.read_bytes(),
-                    password=None,
-                )
-            except (OSError, ValueError, TypeError) as exc:
-                raise RuntimeError(f"VAPID 私钥无法读取: {path}") from exc
-            if (
-                not isinstance(private_key, ec.EllipticCurvePrivateKey)
-                or not isinstance(private_key.curve, ec.SECP256R1)
-            ):
-                raise RuntimeError(f"VAPID 私钥类型无效: {path}")
-        else:
-            private_key = ec.generate_private_key(ec.SECP256R1())
-            pem = private_key.private_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PrivateFormat.PKCS8,
-                encryption_algorithm=serialization.NoEncryption(),
-            )
-            fd, tmp_path = tempfile.mkstemp(
-                dir=str(path.parent),
-                prefix=f".{path.name}.",
-                suffix=".tmp",
-            )
-            try:
-                try:
-                    os.fchmod(fd, 0o600)
-                except OSError:
-                    pass
-                with os.fdopen(fd, "wb") as handle:
-                    handle.write(pem)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                os.replace(tmp_path, path)
-            except Exception:
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
-                raise
-
-        raw_public = private_key.public_key().public_bytes(
-            encoding=serialization.Encoding.X962,
-            format=serialization.PublicFormat.UncompressedPoint,
-        )
-        return base64.urlsafe_b64encode(raw_public).rstrip(b"=").decode("ascii")
 
     @staticmethod
     def _retry_after_seconds(response) -> int:

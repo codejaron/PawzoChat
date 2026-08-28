@@ -86,7 +86,7 @@ function _renderPluginListBody() {
         </svg>
         <div class="empty-text">暂无已安装的插件</div>
         <div style="font-size:13px;color:var(--text-3);margin-top:8px;max-width:280px;text-align:center;line-height:1.5">
-          将插件目录放入 <code style="background:var(--bg);padding:1px 4px;border-radius:3px">data/plugins/</code> 后点击右上角刷新
+          将插件目录放入 PawzoChat 数据目录下的 <code style="background:var(--bg);padding:1px 4px;border-radius:3px">plugins/</code> 后点击右上角刷新
         </div>
       </div>
     </div>`;

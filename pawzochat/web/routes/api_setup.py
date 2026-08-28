@@ -21,13 +21,12 @@ from __future__ import annotations
 import logging
 import os
 import sys
-from pathlib import Path
 
 from flask import Blueprint, jsonify, request
 
 from pawzochat.image.manager import IMAGE_PRESET_MODELS
 from pawzochat.llm.manager import PRESET_MODELS, ensure_models_list
-from pawzochat.paths import APP_HOME, INVITATION_CODE_PATH
+from pawzochat.paths import INVITATION_CODE_PATH, MCP_SERVERS_DIR
 from pawzochat.voice.manager import VOICE_PRESET_MODELS
 from pawzochat.web.routes import get_app
 
@@ -78,32 +77,26 @@ def _read_invitation_code() -> str:
     return ""
 
 
-def _resolve_builtin_entry(relative_path: str) -> Path:
-    return (APP_HOME / relative_path).resolve()
-
-
 def _script_stdio_config(server_dir: str) -> dict | None:
-    script_path = f"data/mcp_servers/{server_dir}/server.py"
-    expected = _resolve_builtin_entry(script_path)
-    if not expected.is_file():
+    script_path = (MCP_SERVERS_DIR / server_dir / "server.py").resolve()
+    if not script_path.is_file():
         return None
     return {
         "transport": "stdio",
-        "command": "python",
-        "args": [script_path],
+        "command": "python" if getattr(sys, "frozen", False) else sys.executable,
+        "args": [str(script_path)],
         "enabled": True,
     }
 
 
 def _packaged_stdio_config(server_dir: str) -> dict | None:
     executable_name = "server.exe" if os.name == "nt" else "server"
-    command = f"data/mcp_servers/{server_dir}/{executable_name}"
-    expected = _resolve_builtin_entry(command)
-    if not expected.is_file():
+    command = (MCP_SERVERS_DIR / server_dir / executable_name).resolve()
+    if not command.is_file():
         return None
     return {
         "transport": "stdio",
-        "command": command,
+        "command": str(command),
         "args": [],
         "enabled": True,
     }
@@ -123,14 +116,15 @@ def _builtin_stdio_config(server_dir: str) -> dict:
             return script
         executable_name = "server.exe" if os.name == "nt" else "server"
         raise FileNotFoundError(
-            f"内置 MCP 文件缺失: {APP_HOME / 'data' / 'mcp_servers' / server_dir / executable_name}"
+            f"内置 MCP 文件缺失: "
+            f"{MCP_SERVERS_DIR / server_dir / executable_name}"
         )
 
     script = _script_stdio_config(server_dir)
     if script:
         return script
     raise FileNotFoundError(
-        f"内置 MCP 脚本缺失: {APP_HOME / 'data' / 'mcp_servers' / server_dir / 'server.py'}"
+        f"内置 MCP 脚本缺失: {MCP_SERVERS_DIR / server_dir / 'server.py'}"
     )
 
 
